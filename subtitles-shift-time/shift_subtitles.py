@@ -14,9 +14,9 @@ def shift_time():
     time=float(E2.get())
     if var2.get() == 1:
         time=-abs(time)
-        smer="dozadu"
+        smer="backward"
     else:
-        smer="dopredu"
+        smer="forward"
     files = [f for f in listdir(dir) if isfile(join(dir, f)) & (f.endswith('.ass') | f.endswith('.srt'))] 
     pocet=0
     for meno in files:
@@ -31,9 +31,9 @@ def shift_time_word():
     slovo=E3.get()
     if var2.get() == 1:
         time=-abs(time)
-        smer="forward"
-    else:
         smer="backward"
+    else:
+        smer="forward"
     files = [f for f in listdir(dir) if isfile(join(dir, f)) & (f.endswith('.ass') | f.endswith('.srt'))] 
     pocet=0
     for meno in files:
