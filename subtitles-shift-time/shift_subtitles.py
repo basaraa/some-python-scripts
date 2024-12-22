@@ -9,6 +9,7 @@ except ImportError:
   os.system('python -m pip install tkinter')
   from tkinter import *
 master = Tk()
+
 def shift_time():
     dir=E1.get()
     time=float(E2.get())
@@ -41,7 +42,7 @@ def shift_time_word():
         casuj=0
         iter=0
         for word in subs:           
-            if (word.text==slovo):
+            if slovo in word.text and casuj!=1:
                 casuj=1
                 pocet+=1
             if (casuj==1):
@@ -49,7 +50,36 @@ def shift_time_word():
             iter+=1 
         subs.save(dir+meno)                   
     message.config(text="Shifted "+str(pocet)+" files by "+str(abs(time))+" seconds "+smer)
-master.geometry("500x260")        
+    
+def shift_from_OP():
+    dir=E1.get()
+    time=float(E2.get())
+    if var2.get() == 1:
+        time=-abs(time)
+        smer="backward"
+    else:
+        smer="forward"
+    files = [f for f in listdir(dir) if isfile(join(dir, f)) & (f.endswith('.ass') | f.endswith('.srt'))] 
+    pocet=0
+    for meno in files:
+        subs = pysubs2.load(dir+meno)
+        casuj=0
+        iter=0
+        timePrevious=0
+        timeNow=0
+        for word in subs:
+            timeNow= int(word.start)
+            if timeNow - timePrevious > 90000 and casuj!=1:
+                casuj=1
+                pocet+=1
+            if (casuj==1):
+                subs[iter].shift(s=time)            
+            iter+=1
+            timePrevious= int(word.end)  
+        subs.save(dir+meno)                   
+    message.config(text="Shifted "+str(pocet)+" files by "+str(abs(time))+" seconds "+smer)
+    
+master.geometry("560x260")        
 Label(master, text="Enter dir:",fg="red").grid(row=0, sticky=W,column=0)
 E1 = Entry(master, bd =5,width=40)
 E1.grid(row=1,column=0)
@@ -68,6 +98,7 @@ var2 = IntVar()
 Checkbutton(master, text="Backward", variable=var2).grid(row=6,column=1)
 message=Label(master, text="",fg="green")
 message.grid(row=7,column=0)
-Button(master, text='Shift subtitles', command=shift_time,fg="blue").grid(row=8,column=0)
-Button(master, text='Shift from certain word', command=shift_time_word,fg="blue").grid(row=8,column=1)
+Button(master, text='Shift subtitles', command=shift_time,fg="blue").grid(row=8,sticky=W,padx=10)
+Button(master, text='Shift from certain word', command=shift_time_word,fg="blue").grid(row=8,padx=140)
+Button(master, text='Shift from OP', command=shift_from_OP,fg="blue").grid(row=8,column=1)
 mainloop()
