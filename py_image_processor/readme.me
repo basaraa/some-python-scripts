@@ -1,0 +1,144 @@
+# 🖼️ Batch Image Converter & Editor
+
+[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![Pillow](https://img.shields.io/badge/Pillow-Latest-green.svg)](https://python-pillow.org/)
+[![Tkinter](https://img.shields.io/badge/GUI-Tkinter-orange.svg)](https://docs.python.org/3/library/tkinter.html)
+
+A lightweight, high-performance desktop GUI application for batch image conversion, transformations, and editing built with **Python**, **Tkinter**, and **Pillow (PIL)**.
+
+Designed for photographers, web developers, and designers who need quick batch processing with an interactive visual preview, non-destructive editing, and zero risk of overwriting original files.
+
+---
+
+## ✨ Features
+
+- **Non-Destructive Transformation Pipeline**:
+  - Every operation (crop, resize, rotation, filter) is queued in an independent action pipeline.
+  - **True Filter Toggling**: Turn filters (e.g., *Sharpen* or *Grayscale*) on or off at any point without destroying subsequent crops, resizes, or rotations.
+  - Step-by-step **Undo (`Ctrl+Z`)** and full revert capabilities.
+- **Universal Format Conversion**:
+  - Convert between all common image formats: `JPEG`, `PNG`, `WEBP`, `BMP`, `TIFF`, `GIF`, and `ICO`.
+  - Quality slider for lossy formats (`JPEG` & `WEBP`).
+  - **Smart Alpha-Channel Handling**: Automatically replaces transparent alpha channels with clean white backgrounds when exporting to formats that do not support transparency (such as JPEG/BMP).
+- **Flexible Batch Processing**:
+  - Multi-select files in list view using `Shift + Click`, `Ctrl + Click`, or toggle checkmarks (`[✓]`).
+  - Target scope selectors: Apply transformations to **Highlighted items**, **Checked items `[✓]`**, or **Active preview only**.
+- **Interactive Visual Crop**:
+  - Drag-and-drop bounding box directly over the live preview canvas.
+  - Intelligently applies relative/proportional crops across batches with varying aspect ratios.
+- **Dual-Mode Resize**:
+  - **By Pixels**: Width & Height inputs with optional aspect ratio lock.
+  - **By Percentage (`%`)**: Dynamic scaling (e.g., reduce all selected images by `50%` regardless of their initial resolution).
+  - Mutually exclusive input fields prevent conflicting parameters.
+- **Safe Timestamped Export**:
+  - **Save All** exports files using a unified batch timestamp (`filename_YYYYMMDD_HHMMSS.ext`), guaranteeing original source files are never overwritten.
+- **Live Canvas Preview with Dynamic Badge**:
+  - Real-time scaled preview with an on-canvas HUD badge showing resolution and aspect ratio (e.g., `1920 × 1080 px (16:9)`).
+
+---
+
+## 📋 Requirements
+
+- **Python**: `3.8` or higher
+- **Pillow**: `Pillow >= 9.0.0`
+- **Tkinter**: Standard Python GUI package (bundled with standard Python installations on Windows and macOS).
+
+---
+
+## 🚀 Installation & Setup
+
+1. **Clone the repository**:
+   ```bash
+   git clone https://github.com/your-username/batch-image-editor.git
+   cd batch-image-editor
+   ```
+
+2. **(Optional) Create a virtual environment**:
+   ```bash
+   # Windows
+   python -m venv venv
+   venv\Scripts\activate
+
+   # Linux / macOS
+   python3 -m venv venv
+   source venv/bin/activate
+   ```
+
+3. **Install dependencies**:
+   ```bash
+   pip install Pillow
+   ```
+
+   > **Note for Linux users (Ubuntu/Debian):** If Tkinter is missing from your system Python, install it via:
+   > ```bash
+   > sudo apt update
+   > sudo apt install python3-tk
+   > ```
+
+4. **Run the application**:
+   ```bash
+   python app.py
+   ```
+
+---
+
+## 🖥️ How It Works (Usage Guide)
+
+### 1. Load Directory & Select Files
+- When launched, the app automatically loads supported images from your current working directory.
+- Click **`📁 Change Directory`** to browse any folder on your computer.
+- Click any file to display it in the interactive preview canvas.
+- Multi-select multiple files in the list using `Ctrl + Click` or `Shift + Click`.
+- Press **`<Space>`** or click **`Mark [✓]`** to tag files for batch tasks.
+
+### 2. Choose Application Scope
+In the middle panel under **Apply Operations To:**, select:
+- **Selected in list (Highlighted)**: Applies actions to rows highlighted in the table.
+- **Checked items [✓]**: Applies actions to all tagged checkboxes.
+- **Active (Previewed) image only**: Applies actions strictly to the opened image.
+
+### 3. Apply Transformations
+- **Crop**: Click and drag a bounding box on the preview canvas, then click **`✂️ Crop to Selection`**.
+- **Resize**: Choose **By Pixels** or **By Percentage (%)**, fill in your desired dimensions, and click **`Apply Resize`**.
+- **Rotate & Flip**: Use `⟲ 90° CCW`, `⟳ 90° CW`, or `⇄ Flip H`.
+- **Toggle Filters**: Click **`Grayscale`**, **`Sharpen`**, or **`Blur`** to apply. Click the button again at any time to toggle it off without resetting other edits.
+
+### 4. Export & Save
+- Set your **Target Format** (e.g., `WEBP` or `PNG`) and adjust the quality slider.
+- Click **`💾 SAVE ALL MODIFIED`**.
+- Choose a destination directory (defaults to your working directory).
+- All modified files will be saved with a timestamp suffix (e.g., `photo_20260914_143000.webp`).
+
+---
+
+## ⌨️ Keyboard Shortcuts
+
+| Shortcut | Action |
+| :--- | :--- |
+| `Ctrl + Z` | **Undo Last Step** on target files |
+| `Space` | **Toggle Checkmark `[✓]` / `[ ]`** on highlighted file(s) |
+| `Double Click` | Toggle single item checkmark in the list |
+
+---
+
+## 🗂️ Supported Image Formats
+
+| Format | Extension | Notes |
+| :--- | :--- | :--- |
+| **JPEG** | `.jpg`, `.jpeg` | Quality control (1-100), auto-flattens transparency |
+| **PNG** | `.png` | Full lossless RGBA support |
+| **WEBP** | `.webp` | High compression efficiency, lossy quality slider |
+| **BMP** | `.bmp` | Windows bitmap format |
+| **TIFF** | `.tiff` | High-quality raster format |
+| **GIF** | `.gif` | Single-frame export |
+| **ICO** | `.ico` | Windows icon format (auto-scaled to 256x256) |
+
+---
+
+## 🏗️ Project Structure
+
+```text
+batch-image-editor/
+├── app.py              # Main application source code (GUI & Engine)
+├── README.md           # Project documentation
+```
