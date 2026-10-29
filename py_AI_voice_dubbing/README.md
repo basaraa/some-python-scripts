@@ -2,6 +2,9 @@
 
 An advanced, offline-first local AI dubbing and multi-voice narration studio built with Python and Tkinter. It automates speech separation, character diarization, pitch-aware voice assignment, neural speech synthesis (Supertonic, Edge-TTS, Coqui XTTS-v2), and adaptive audio mastering with full sound effect (SFX) preservation.
 
+> [!NOTE]
+> **Research & Educational Exploration**: This project was developed as an experimental exploration to test the boundaries of artificial intelligence in audio-to-audio dubbing and text-to-audio speech synthesis. Please see the [Disclaimer & Ethical Use](#-disclaimer--educational--research-purpose) section before using this tool.
+
 ---
 
 ## 🌟 Key Features
@@ -232,6 +235,22 @@ To clone any real person or character voice:
 * **Zero Idle CPU**: ONNX Runtime thread spinning is disabled (`session.intra_op.allow_spinning = 0`), ensuring `0%` CPU utilization when idle.
 * **OpenMP / Thread Limits**: Threads are throttled (`OMP_WAIT_POLICY=PASSIVE`, `OMP_NUM_THREADS=4`) to prevent background thread starvation.
 * **VRAM Management**: Automatic CUDA memory cleanup (`torch.cuda.empty_cache()` and `gc.collect()`) between separation, diarization, and synthesis steps.
+
+---
+
+## ⚖️ Disclaimer & Educational / Research Purpose
+
+> [!IMPORTANT]
+> **Research & Boundary Testing Only**:
+> This software was developed solely as an experimental project to research and test the practical capabilities and limits of modern AI in automated **audio-to-audio dubbing** and **text-to-audio voice synthesis**.
+>
+> **No Malicious Intent**:
+> This project was created strictly for legitimate educational, creative, localization, and academic exploration. It was **not** created, designed, or intended for any harmful, deceptive, or malicious purposes (such as unauthorized voice cloning, deepfakes, impersonation, fraud, defamation, or misleading media).
+>
+> **Limitation of Liability**:
+> The author and contributors accept **no responsibility or liability** whatsoever for any misuse, unlawful conduct, or damages resulting from the use of this software or any media generated with it. By using this tool, the user agrees that:
+> 1. You are solely responsible for ensuring you have all required legal rights, consents, or copyright permissions for any media, video, audio, or reference voices processed.
+> 2. You will strictly adhere to all applicable local, national, and international laws, intellectual property rights, and privacy regulations regarding voice likeness and data protection.
 
 ---
 
