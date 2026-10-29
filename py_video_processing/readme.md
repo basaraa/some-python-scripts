@@ -5,6 +5,7 @@ A lightweight and powerful Python Tkinter GUI tool designed for batch and indivi
 ---
 
 ## 🚀 Features
+> ⚠️ **Disclaimer:** This tool was developed solely for quick, personal home video editing. It is not intended for any illicit, unauthorized, or malicious activities. See the [Disclaimer](#-disclaimer--legal-notice) below.
 
 - **Batch & Single-File Processing:** Process multiple videos simultaneously with either global settings or custom per-video overrides.
 - **HDR to SDR Tonemapping:**
@@ -79,3 +80,13 @@ pip install pillow
 3. Click "Add videos..." or let it automatically load videos from the current folder via "Refresh videos".
 4. Configure your desired operations (Crop, Cut, Resolution, Audio/Video convert, HDR Tonemapping, Subtitles).
 5. Click "START PROCESSING". Output files will be saved with the _processed suffix in the same directory.
+
+---
+
+## ⚠️ Disclaimer & Legal Notice
+
+This software is provided as open-source purely for personal and educational use. It was developed specifically as a lightweight tool for **cutting, cropping, and managing personal home videos**.
+
+- **No Malicious Intent:** This tool is not intended, designed, or encouraged for copyright infringement, unauthorized redistribution of media, or any other illegal or harmful activities.
+- **User Responsibility:** The author accepts **no liability** for any misuse of this software, data loss, or legal consequences arising from how it is used. Users are solely responsible for ensuring that their use complies with local laws and copyright regulations.
+- **"AS IS":** The software is provided "AS IS", without warranties of any kind.
