@@ -8,6 +8,14 @@ LOCAL AI DUBBING & LOCALIZATION STUDIO
 - Tab 1: Batch dubbing mode for processing entire folders with automatic video/subtitle matching
 - Tab 2: Multi-voice narration with sentence parsing, companion cache verification (.txt signatures), and instant playback/export
 - Universal: Automatic reference voice transcription with companion voicename.txt support for custom clones
+
+DISCLAIMER & ETHICAL USE NOTICE:
+This program was developed strictly as an experimental exploration to test and research the capabilities
+and boundaries of modern AI in automated audio-to-audio dubbing and text-to-audio voice synthesis.
+It was NOT created for, nor should it ever be used for, any malicious, deceptive, fraudulent, or defamatory
+purposes (such as unauthorized voice cloning, deepfakes, or impersonation). The author and contributors
+accept no liability or responsibility for any misuse, damage, or legal infringement arising from the use
+of this software. By using this tool you agree to comply with all applicable laws and copyright regulations.
 """
 
 import os
@@ -1511,10 +1519,33 @@ def create_adaptive_master_mix(orig_audio_path, bgm_audio_path, dialogue_track, 
     sf.write(output_path, final_mix, sr)
     return output_path
     
-def mix_and_export_video(video_path, mixed_audio_track, output_video_path):
+def mix_and_export_video(video_path, mixed_audio_track, output_video_path, target_lang="cs"):
+    """
+    Exports the video into an MKV container with multi-track audio:
+      Track 1 (Default): Newly dubbed AI audio with language metadata
+      Track 2 (Optional): Original audio from input video preserved lossless
+    """
+    lang_map = {
+        "cs": "ces", "sk": "slk", "ja": "jpn", "en": "eng", "de": "deu", "pl": "pol"
+    }
+    iso_code = lang_map.get(str(target_lang).lower().strip(), "und")
+    lang_title = f"AI Dubbing ({str(target_lang).upper()})"
+
     cmd = [
-        "ffmpeg", "-y", "-i", video_path, "-i", mixed_audio_track,
-        "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", "-b:a", "320k",
+        "ffmpeg", "-y",
+        "-i", video_path,
+        "-i", mixed_audio_track,
+        "-map", "0:v:0",
+        "-map", "1:a:0",
+        "-map", "0:a:0?",
+        "-c:v", "copy",
+        "-c:a:0", "aac", "-b:a:0", "320k",
+        "-metadata:s:a:0", f"title={lang_title}",
+        "-metadata:s:a:0", f"language={iso_code}",
+        "-disposition:a:0", "default",
+        "-c:a:1", "copy",
+        "-metadata:s:a:1", "title=Original Audio",
+        "-disposition:a:1", "0",
         output_video_path
     ]
     run_cmd(cmd)
@@ -1638,7 +1669,12 @@ def create_app():
         if fn:
             sub_entry.delete(0, tk.END)
             sub_entry.insert(0, fn)
-    ttk.Button(top_frame, text="Browse...", command=browse_sub).grid(row=3, column=2, padx=5)
+
+    sub_btn_box = ttk.Frame(top_frame)
+    sub_btn_box.grid(row=3, column=2, padx=5, sticky="w")
+    ttk.Button(sub_btn_box, text="Browse...", command=browse_sub).pack(side="left", padx=2)
+    whisper_sub_btn = ttk.Button(sub_btn_box, text="🎙 Transcribe with Whisper", command=lambda: threading.Thread(target=task_transcribe_whisper, daemon=True).start())
+    whisper_sub_btn.pack(side="left", padx=2)
 
     settings_frame = ttk.Frame(top_frame)
     settings_frame.grid(row=4, column=1, sticky="w", pady=3)
@@ -1856,9 +1892,10 @@ def create_app():
             refresh_speaker_table()
             refresh_subtitle_table()
 
-    ttk.Label(tbl_btn_frame, text="Voice for character:").pack(side="left", padx=(3, 2))
-    spk_voice_combo = ttk.Combobox(tbl_btn_frame, width=38, state="readonly")
+    ttk.Label(tbl_btn_frame, text="Character Voice:").pack(side="left", padx=(2, 2))
+    spk_voice_combo = ttk.Combobox(tbl_btn_frame, width=32, state="readonly")
     spk_voice_combo.pack(side="left", padx=2)
+    spk_voice_combo.bind("<Return>", lambda e: play_speaker_voice_preview())
 
     def update_spk_voices_dropdown():
         cat, vmap = get_all_available_voices(lang_combo.get().strip())
@@ -1945,9 +1982,38 @@ def create_app():
         if not ok:
             messagebox.showwarning("Notice", msg)
 
-    ttk.Button(tbl_btn_frame, text="✔ Assign Voice to Character", command=assign_selected_voice_to_speaker).pack(side="left", padx=3)
-    ttk.Button(tbl_btn_frame, text="▶ Preview Selected Voice", command=play_speaker_voice_preview).pack(side="left", padx=3)
-    ttk.Button(tbl_btn_frame, text="📁 Assign Custom WAV...", command=assign_custom_voice).pack(side="left", padx=3)
+    def play_speaker_original_clip():
+        sel = spk_tree.selection()
+        if not sel:
+            messagebox.showinfo("Info", "Please select a character from the table first.")
+            return
+        spk_id = spk_tree.item(sel[0])["values"][0]
+        spk_data = dub_state["data"].get("speakers", {}).get(spk_id, {})
+        clip_path = spk_data.get("preview_file")
+        if not (clip_path and os.path.exists(clip_path)):
+            spk_dir = dub_state.get("folders", {}).get("speakers")
+            if spk_dir:
+                clip_path = os.path.join(spk_dir, f"{spk_id}_clean_voice.wav")
+        if not (clip_path and os.path.exists(clip_path)):
+            messagebox.showwarning(
+                "Notice",
+                f"Original voice clip for {spk_id} was not found.\n\n"
+                "Please run '1. Analyze & Diarize' first to separate audio and extract character clips."
+            )
+            return
+        try:
+            data, sr = sf.read(clip_path)
+            sd.stop()
+            sd.play(data, sr)
+            log(f"[Playback] Playing original clip for {spk_id}: {os.path.basename(clip_path)}")
+        except Exception as e:
+            messagebox.showwarning("Notice", f"Playback error: {e}")
+
+    ttk.Button(tbl_btn_frame, text="▶ Test", width=7, command=play_speaker_voice_preview).pack(side="left", padx=2)
+    ttk.Button(tbl_btn_frame, text="✔ Assign", style="Accent.TButton", command=assign_selected_voice_to_speaker).pack(side="left", padx=2)
+    ttk.Separator(tbl_btn_frame, orient="vertical").pack(side="left", fill="y", padx=6, pady=2)
+    ttk.Button(tbl_btn_frame, text="▶ Play Original Clip (Video)", command=play_speaker_original_clip).pack(side="left", padx=3)
+    ttk.Button(tbl_btn_frame, text="📁 Custom WAV...", command=assign_custom_voice).pack(side="left", padx=3)
 
     # 3. Nový rámec: Zoznam replík / titulkov a priradenie hlasov (Tab 1)
     sub_frame = ttk.LabelFrame(tab_dubbing, text=" 3. Subtitles & Voice Assignment (Ctrl/Shift selection, sortable columns) ", padding=6)
@@ -1956,9 +2022,10 @@ def create_app():
     sub_toolbar = ttk.Frame(sub_frame)
     sub_toolbar.pack(fill="x", pady=(0, 4))
 
-    ttk.Label(sub_toolbar, text="Voice for selected lines:").pack(side="left", padx=(2, 4))
-    sub_voice_combo = ttk.Combobox(sub_toolbar, width=40, state="readonly")
+    ttk.Label(sub_toolbar, text="Line Voice:").pack(side="left", padx=(2, 2))
+    sub_voice_combo = ttk.Combobox(sub_toolbar, width=34, state="readonly")
     sub_voice_combo.pack(side="left", padx=2)
+    sub_voice_combo.bind("<Return>", lambda e: play_sub_voice_preview())
 
     def update_tab1_voices_dropdown():
         cat, vmap = get_all_available_voices(lang_combo.get().strip())
@@ -2021,9 +2088,9 @@ def create_app():
         if not ok:
             messagebox.showwarning("Upozornenie", msg)
 
-    ttk.Button(sub_toolbar, text="✓ Apply to Selected (Ctrl/Shift)", style="Accent.TButton", command=assign_voice_to_selected_subtitles).pack(side="left", padx=4)
-    ttk.Button(sub_toolbar, text="↺ Reset to Character Voice", command=reset_selected_subtitles_voice).pack(side="left", padx=3)
-    ttk.Button(sub_toolbar, text="▶ Preview Voice", command=play_sub_voice_preview).pack(side="left", padx=3)
+    ttk.Button(sub_toolbar, text="▶ Test", width=7, command=play_sub_voice_preview).pack(side="left", padx=2)
+    ttk.Button(sub_toolbar, text="✓ Apply to Selected", style="Accent.TButton", command=assign_voice_to_selected_subtitles).pack(side="left", padx=3)
+    ttk.Button(sub_toolbar, text="↺ Reset to Character", command=reset_selected_subtitles_voice).pack(side="left", padx=3)
     ttk.Button(sub_toolbar, text="Select All", command=lambda: sub_tree.selection_set(sub_tree.get_children())).pack(side="left", padx=3)
 
     sub_columns = ("id", "time", "speaker", "voice", "text")
@@ -2515,11 +2582,50 @@ def create_app():
                 actual_srt = srt_p if srt_p else sub_entry.get().strip()
                 if not (actual_srt and os.path.exists(actual_srt)):
                     if not is_batch:
-                        messagebox.showerror("Error", "The specified .srt file was not found!")
-                    log(f"[Error] Subtitle file not found: {actual_srt}")
-                    return False
-                log(f"[Subtitles] Loading subtitles: {os.path.basename(actual_srt)}...")
-                segments = parse_srt_file(actual_srt)
+                        ans = messagebox.askyesno(
+                            "Subtitles Missing",
+                            "No subtitle (.srt) file was specified.\n\n"
+                            "Would you like to automatically transcribe dialogue from the video using Whisper now?"
+                        )
+                        if ans:
+                            log("[STT] Auto-transcribing dialogue with Whisper...")
+                            from faster_whisper import WhisperModel
+                            whisper = WhisperModel("medium", device=DEVICE, compute_type="float16" if "cuda" in DEVICE else "int8")
+                            segments_raw, _ = whisper.transcribe(speech_audio, vad_filter=True)
+                            segments = []
+                            srt_lines = []
+                            for idx_s, s in enumerate(segments_raw, 1):
+                                if s.text.strip():
+                                    s_start = round(s.start, 3)
+                                    s_end = round(s.end, 3)
+                                    srt_lines.append(f"{idx_s}\n{format_timestamp_srt(s_start)} --> {format_timestamp_srt(s_end)}\n{s.text.strip()}\n")
+                                    segments.append({
+                                        "id": idx_s,
+                                        "start": s_start,
+                                        "end": s_end,
+                                        "text": s.text.strip(),
+                                        "speaker": "Speaker_01",
+                                        "assigned_voice": ""
+                                    })
+                            del whisper
+                            clear_vram()
+                            base_name = os.path.splitext(os.path.basename(v_path))[0]
+                            auto_srt = os.path.join(dub_state["folders"]["subtitles"], f"{base_name}_whisper.srt")
+                            with open(auto_srt, "w", encoding="utf-8") as f:
+                                f.write("\n".join(srt_lines) + "\n")
+                            sub_entry.delete(0, tk.END)
+                            sub_entry.insert(0, auto_srt)
+                            dub_state["data"]["sub_path"] = auto_srt
+                            dub_state["data"]["subtitles"] = segments
+                        else:
+                            log(f"[Error] Subtitle file not found: {actual_srt}")
+                            return False
+                    else:
+                        log(f"[Error] Subtitle file not found: {actual_srt}")
+                        return False
+                else:
+                    log(f"[Subtitles] Loading subtitles: {os.path.basename(actual_srt)}...")
+                    segments = parse_srt_file(actual_srt)
             else:
                 log("[STT] Transcribing speech to text with Whisper...")
                 from faster_whisper import WhisperModel
@@ -2769,7 +2875,7 @@ def create_app():
             base_vname = os.path.splitext(os.path.basename(v_path))[0]
             out_video = os.path.join(dub_state["folders"]["output"], f"{base_vname}_dubbed_{tgt_lang}_{ts_str}.mkv")
 
-            mix_and_export_video(v_path, mixed_master_wav, out_video)
+            mix_and_export_video(v_path, mixed_master_wav, out_video, target_lang=tgt_lang)
 
             prog_var.config(value=100)
             dub_state["data"]["steps_completed"]["final_export"] = True
@@ -2791,6 +2897,106 @@ def create_app():
                 dub_btn.config(state="normal")
                 batch_dub_btn.config(state="normal")
                 cancel_btn.config(state="disabled")
+
+    def task_transcribe_whisper():
+        v = video_entry.get().strip()
+        if not (v and os.path.exists(v)):
+            messagebox.showwarning("Notice", "Please select a valid video/audio file first.")
+            return
+
+        init_project_state(v)
+        dub_state["cancel_requested"] = False
+        analyze_btn.config(state="disabled")
+        dub_btn.config(state="disabled")
+        batch_dub_btn.config(state="disabled")
+        if 'whisper_sub_btn' in locals() or 'whisper_sub_btn' in globals():
+            whisper_sub_btn.config(state="disabled")
+        cancel_btn.config(state="normal")
+
+        try:
+            log("[Whisper] Starting automated subtitle transcription...")
+            prog_var.config(value=10)
+
+            extracted_audio = os.path.join(dub_state["folders"]["audio"], "extracted_audio.wav")
+            if not os.path.exists(extracted_audio):
+                log("[Audio] Extracting audio track from video...")
+                extract_audio_from_video(v, extracted_audio)
+            dub_state["data"]["extracted_audio"] = extracted_audio
+
+            if dub_state["cancel_requested"]:
+                log("[Whisper] Cancelled by user.")
+                return
+
+            vocals_path = os.path.join(dub_state["folders"]["separation"], "vocals.wav")
+            speech_audio = vocals_path if os.path.exists(vocals_path) else extracted_audio
+
+            prog_var.config(value=30)
+            log(f"[Whisper] Transcribing speech from '{os.path.basename(speech_audio)}' (Medium model)...")
+
+            from faster_whisper import WhisperModel
+            whisper = WhisperModel("medium", device=DEVICE, compute_type="float16" if "cuda" in DEVICE else "int8")
+            segments_raw, info = whisper.transcribe(speech_audio, vad_filter=True)
+
+            srt_lines = []
+            parsed_segments = []
+            idx = 1
+            for s in segments_raw:
+                if dub_state["cancel_requested"]:
+                    break
+                txt = s.text.strip()
+                if txt:
+                    s_start = round(s.start, 3)
+                    s_end = round(s.end, 3)
+                    srt_lines.append(f"{idx}\n{format_timestamp_srt(s_start)} --> {format_timestamp_srt(s_end)}\n{txt}\n")
+                    parsed_segments.append({
+                        "id": idx,
+                        "start": s_start,
+                        "end": s_end,
+                        "text": txt,
+                        "speaker": "Speaker_01",
+                        "assigned_voice": ""
+                    })
+                    idx += 1
+
+            del whisper
+            clear_vram()
+
+            if dub_state["cancel_requested"]:
+                log("[Whisper] Cancelled by user.")
+                return
+
+            if not parsed_segments:
+                log("[Whisper] No speech detected in the audio track.")
+                messagebox.showinfo("Whisper", "No speech detected in the audio track.")
+                return
+
+            base_name = os.path.splitext(os.path.basename(v))[0]
+            srt_out_path = os.path.join(dub_state["folders"]["subtitles"], f"{base_name}_whisper.srt")
+            with open(srt_out_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(srt_lines) + "\n")
+
+            sub_entry.delete(0, tk.END)
+            sub_entry.insert(0, srt_out_path)
+            mode_var.set("EXISTING_SRT")
+            dub_state["data"]["sub_path"] = srt_out_path
+            dub_state["data"]["subtitles"] = parsed_segments
+            save_project(dub_state["data"], dub_state["proj_file"])
+
+            root.after(0, refresh_subtitle_table)
+            prog_var.config(value=100)
+            log(f"[Whisper] Generated {len(parsed_segments)} subtitle lines -> {srt_out_path}")
+            messagebox.showinfo("Whisper Subtitles", f"Successfully generated {len(parsed_segments)} subtitle lines!\n\nSaved to:\n{srt_out_path}")
+
+        except Exception as e:
+            log(f"[Whisper Error] {e}")
+            messagebox.showerror("Whisper Error", f"Failed to transcribe subtitles:\n{e}")
+        finally:
+            analyze_btn.config(state="normal")
+            dub_btn.config(state="normal")
+            batch_dub_btn.config(state="normal")
+            if 'whisper_sub_btn' in locals() or 'whisper_sub_btn' in globals():
+                whisper_sub_btn.config(state="normal")
+            cancel_btn.config(state="disabled")
 
     def task_analyze():
         v = video_entry.get().strip()
@@ -3113,17 +3319,57 @@ def create_app():
 # ==============================================================================
 
 def play_any_voice_sample(voice_label, target_lang="cs", log_cb=print):
+    """
+    Auditions any selected voice (Supertonic, Edge-TTS, or Custom Clone).
+    Uses localized sample sentences and disk caching for instant 0ms playback.
+    """
     cat, v_map = get_all_available_voices(target_lang)
     info = v_map.get(voice_label)
-    if not info:
+
+    # Fallback matching: handles format differences like "⚡ Supertonic [M1]" vs "⚡ [Supertonic] M1"
+    if not info and voice_label:
+        v_lbl_lower = voice_label.lower()
+        # Substring match in either direction
         for k, v in v_map.items():
-            if voice_label.lower() in k.lower():
+            k_lower = k.lower()
+            if v_lbl_lower in k_lower or k_lower in v_lbl_lower:
                 info = v
                 break
+
+    # Supertonic token match (M1..M5, F1..F5)
+    if not info and voice_label:
+        import re
+        st_m = re.search(r'\b([MF][1-5])\b', voice_label, re.IGNORECASE)
+        if st_m:
+            target_vid = st_m.group(1).upper()
+            for k, v in v_map.items():
+                if v.get("type") == "supertonic" and v.get("voice_id") == target_vid:
+                    info = v
+                    break
+
+    # Voice ID / Name match
+    if not info and voice_label:
+        for k, v in v_map.items():
+            vid = str(v.get("voice_id", "")).lower()
+            if vid and (vid in voice_label.lower() or voice_label.lower() in vid):
+                info = v
+                break
+
     if not info:
-        return False, "Voice not found."
+        return False, f"Voice '{voice_label}' not found."
 
     lang_code = target_lang.split()[0].lower() if target_lang else "cs"
+
+    # Localized sample phrases for natural auditioning in project language
+    localized_samples = {
+        "cs": "Toto je ukázka syntézy hlasu pro dabing.",
+        "sk": "Toto je ukážka syntézy hlasu pre dabing.",
+        "ja": "これはローカル日本語吹き替えのサンプル音声です。",
+        "de": "Dies ist ein Sprachbeispiel für die Synchronisation.",
+        "pl": "To jest próbka głosu do dubbingu.",
+        "en": "This is a voice sample for video dubbing."
+    }
+    sample_txt = localized_samples.get(lang_code, localized_samples["en"])
 
     if info["type"] == "clone":
         v_path = info.get("path")
@@ -3131,35 +3377,43 @@ def play_any_voice_sample(voice_label, target_lang="cs", log_cb=print):
             data, sr = sf.read(v_path)
             sd.stop()
             sd.play(data, sr)
-            return True, "Playing custom voice."
+            return True, f"Playing custom voice: {os.path.basename(v_path)}"
         return False, "Voice file does not exist."
 
     elif info["type"] == "supertonic":
         v_id = info["voice_id"]
-        test_wav = os.path.join(VOICES_DIR, f"preview_st_{v_id}.wav")
-        sample_txt = "これはローカル日本語吹き替えのサンプル音声です。" if lang_code == "ja" else "This is a voice sample from the local Supertonic model."
-        engine = DynamicDubbingEngine(target_lang=lang_code, engine_type="supertonic")
-        engine.ensure_supertonic_loaded(log_cb=log_cb)
-        style = engine.supertonic_model.get_voice_style(voice_name=v_id)
-        wav, _ = engine.supertonic_model.synthesize(text=sample_txt, voice_style=style, lang=lang_code, total_steps=8, speed=1.0)
-        engine.supertonic_model.save_audio(wav, test_wav)
+        test_wav = os.path.join(VOICES_DIR, f"preview_st_{v_id}_{lang_code}.wav")
+        if not (os.path.exists(test_wav) and os.path.getsize(test_wav) > 1000):
+            st_lang = lang_code if lang_code in ["cs", "sk", "ja", "en", "de", "pl"] else "en"
+            engine = DynamicDubbingEngine(target_lang=lang_code, engine_type="supertonic")
+            engine.ensure_supertonic_loaded(log_cb=log_cb)
+            style = engine.supertonic_model.get_voice_style(voice_name=v_id)
+            wav, _ = engine.supertonic_model.synthesize(text=sample_txt, voice_style=style, lang=st_lang, total_steps=8, speed=1.0)
+            engine.supertonic_model.save_audio(wav, test_wav)
         data, sr = sf.read(test_wav)
         sd.stop()
         sd.play(data, sr)
-        return True, "Playing Supertonic voice preview."
+        return True, f"Playing Supertonic [{v_id}] preview ({lang_code.upper()})."
 
     elif info["type"] == "edge":
         v_id = info["voice_id"]
-        test_wav = os.path.join(VOICES_DIR, "preview_test.wav")
-        sample_txt = "これはローカル日本語吹き替えのサンプル音声です。" if lang_code == "ja" else "This is a voice sample for speech synthesis and dubbing."
-        comm = edge_tts.Communicate(sample_txt, v_id)
-        asyncio.run(comm.save(test_wav + ".mp3"))
-        cmd = ["ffmpeg", "-y", "-i", test_wav + ".mp3", "-ar", str(SAMPLE_RATE), test_wav]
-        run_cmd(cmd)
+        clean_vid = v_id.replace(":", "_").replace("/", "_")
+        test_wav = os.path.join(VOICES_DIR, f"preview_edge_{clean_vid}_{lang_code}.wav")
+        if not (os.path.exists(test_wav) and os.path.getsize(test_wav) > 1000):
+            tmp_mp3 = test_wav + ".mp3"
+            comm = edge_tts.Communicate(sample_txt, v_id)
+            asyncio.run(comm.save(tmp_mp3))
+            cmd = ["ffmpeg", "-y", "-i", tmp_mp3, "-ar", str(SAMPLE_RATE), "-ac", "1", test_wav]
+            run_cmd(cmd)
+            if os.path.exists(tmp_mp3):
+                try:
+                    os.remove(tmp_mp3)
+                except Exception:
+                    pass
         data, sr = sf.read(test_wav)
         sd.stop()
         sd.play(data, sr)
-        return True, "Playing Edge-TTS voice preview."
+        return True, f"Playing Edge-TTS [{v_id}] preview."
 
     return False, "Unknown voice type."
 
