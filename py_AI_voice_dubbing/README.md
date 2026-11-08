@@ -20,7 +20,10 @@ An advanced, offline-first local AI dubbing and multi-voice narration studio bui
     * **Western / Europe (US, EU)**: Tailored for lower European male pitches (Male: < 142 Hz, Female: > 168 Hz, Dead-zone: 142–168 Hz).
   * Automatically tags gender (`Male 👨`, `Female 👩`, `? Uncertain`) and assigns suitable voices.
   * Silent subtitles (e.g., text/signs on walls, graphic cards, scene breaks) automatically default to `Speaker_01` with voice `⚡ Supertonic [M1]`.
-* **Character Voice Customization**:
+* **Character Voice Audition & Customization**:
+  * **▶ Play Original Clip (Video)**: Instant playback of the character's real original dialogue slice cut directly from the video vocals, making it effortless to identify the character and verify their real voice/gender.
+  * **▶ Test**: Instant compact playback (25 ms cached) of whichever voice is currently chosen in the dropdown.
+  * **🔗 Merge Characters (Ctrl/Shift)**: Select multiple characters in the table to instantly merge them into a single character (reassigning all dialogue lines, merging speech durations, and updating project data).
   * Interactive dropdown for detected characters to choose any voice:
     * ⚡ **Supertonic**: Local ONNX neural voices (`M1`..`M5`, `F1`..`F5`).
     * 🎙️ **Edge-TTS**: High-fidelity neural voices.

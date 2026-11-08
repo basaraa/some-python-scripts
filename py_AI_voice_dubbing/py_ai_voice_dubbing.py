@@ -259,7 +259,7 @@ def estimate_pitch_f0(audio_chunk, sr=SAMPLE_RATE):
         peak_rel = int(np.argmax(region))
         peak = min_lag + peak_rel
 
-        # Parabolicka interpolacia pre sub-sample presnost
+        # Parabolic interpolation for sub-sample accuracy
         if 0 < peak_rel < len(region) - 1:
             y0, y1, y2 = region[peak_rel - 1], region[peak_rel], region[peak_rel + 1]
             denom = (2 * y1 - y0 - y2)
@@ -579,54 +579,58 @@ class OfflineSpeakerEncoder:
 
 def assign_supertonic_voices_to_speakers(speakers, profile="asia"):
     """
-    Assigns Supertonic voices (M1-M5 / F1-F5) based on speaker F0 pitch and profile (Asia vs Western).
-
-    Gender/Pitch Classification Thresholds:
-      - Asia (China, Japan, Korea): Male 120-175 Hz, Female 185-280+ Hz.
-        male_cutoff < 160.0 Hz, female_cutoff > 185.0 Hz, dead-zone 160-185 Hz (std > 16.0 -> Female).
-      - Western / Europe: Male 85-145 Hz, Female 168-250 Hz.
-        male_cutoff < 142.0 Hz, female_cutoff > 168.0 Hz, dead-zone 142-168 Hz (std > 12.0 -> Female).
+    Assigns Supertonic voices (M1-M5 / F1-F5) strictly according to character gender and speaking duration:
+      - Cutoffs:
+          * Asia (China, Japan, Korea): Male < 165.0 Hz, Female >= 165.0 Hz
+          * Western / Europe (US, EU): Male < 155.0 Hz, Female >= 155.0 Hz
+      - Definitive spk_info["gender"] = "male" | "female" is stored for all UI views.
+      - Male with longest speaking duration gets M1, second M2, etc.
+      - Female with longest speaking duration gets F1, second F2, etc.
     """
-    male_pool = SUPERTONIC_MALE_VOICES.copy()
-    female_pool = SUPERTONIC_FEMALE_VOICES.copy()
+    if not speakers:
+        return
 
     is_asia = "azia" in str(profile).lower() or "ázij" in str(profile).lower() or "asia" in str(profile).lower()
-    male_cutoff = 160.0 if is_asia else 142.0
-    female_cutoff = 185.0 if is_asia else 168.0
-    std_thresh = 16.0 if is_asia else 12.0
+    split_threshold = 165.0 if is_asia else 155.0
 
-    for spk_id, spk_info in sorted(speakers.items()):
-        median_f0 = spk_info.get("avg_f0", 140.0)
-        std_f0 = spk_info.get("f0_std", 0.0)
+    male_speakers = []
+    female_speakers = []
 
-        if median_f0 < male_cutoff:
-            is_female = False
-            confidence = "confident (male)"
-        elif median_f0 > female_cutoff:
-            is_female = True
-            confidence = "confident (female)"
+    for spk_id, spk_info in speakers.items():
+        f0 = spk_info.get("avg_f0", 140.0)
+        dur = spk_info.get("total_duration", 0.0)
+
+        is_fem = (f0 >= split_threshold)
+        spk_info["gender"] = "female" if is_fem else "male"
+        spk_info["is_female"] = is_fem
+        spk_info["gender_confidence"] = f"{'female' if is_fem else 'male'} (F0={f0:.1f}Hz, thresh={split_threshold:.0f}Hz)"
+
+        if is_fem:
+            female_speakers.append((spk_id, spk_info, dur))
         else:
-            is_female = std_f0 > std_thresh
-            confidence = f"uncertain (F0={median_f0:.0f}Hz, std={std_f0:.0f}Hz)"
+            male_speakers.append((spk_id, spk_info, dur))
 
-        if not spk_info.get("supertonic_voice"):
-            # Ak ide o Speaker_01 (napr. rozprávač alebo nápisy bez hlasu), preferujeme M1
-            if spk_id == "Speaker_01" and not is_female:
-                spk_info["supertonic_voice"] = "M1"
-                if "M1" in male_pool:
-                    male_pool.remove("M1")
-            elif is_female:
-                if not female_pool:
-                    female_pool = SUPERTONIC_FEMALE_VOICES.copy()
-                    random.shuffle(female_pool)
-                spk_info["supertonic_voice"] = female_pool.pop(0)
-            else:
-                if not male_pool:
-                    male_pool = SUPERTONIC_MALE_VOICES.copy()
-                    random.shuffle(male_pool)
-                spk_info["supertonic_voice"] = male_pool.pop(0)
+    # Sort each gender independently by total speaking duration (longest speaking first!)
+    male_speakers.sort(key=lambda x: x[2], reverse=True)
+    female_speakers.sort(key=lambda x: x[2], reverse=True)
 
-        spk_info["gender_confidence"] = confidence
+    # Assign Male voices M1..M5 by duration
+    for rank, (spk_id, spk_info, dur) in enumerate(male_speakers):
+        v_idx = rank % len(SUPERTONIC_MALE_VOICES)
+        chosen = SUPERTONIC_MALE_VOICES[v_idx]
+        spk_info["supertonic_voice"] = chosen
+        spk_info["assigned_voice"] = f"⚡ Supertonic [{chosen}]"
+        for seg in spk_info.get("segments", []):
+            seg["assigned_voice"] = f"⚡ Supertonic [{chosen}]"
+
+    # Assign Female voices F1..F5 by duration
+    for rank, (spk_id, spk_info, dur) in enumerate(female_speakers):
+        v_idx = rank % len(SUPERTONIC_FEMALE_VOICES)
+        chosen = SUPERTONIC_FEMALE_VOICES[v_idx]
+        spk_info["supertonic_voice"] = chosen
+        spk_info["assigned_voice"] = f"⚡ Supertonic [{chosen}]"
+        for seg in spk_info.get("segments", []):
+            seg["assigned_voice"] = f"⚡ Supertonic [{chosen}]"
 
 
 def diarize_segments_direct(audio_path, segments, max_speakers=6, log_cb=print, profile="asia"):
@@ -744,7 +748,7 @@ def diarize_segments_direct(audio_path, segments, max_speakers=6, log_cb=print, 
 
     for spk_id, info in sorted(speakers.items(), key=lambda x: x[1]["total_duration"], reverse=True):
         f0_val = info.get("avg_f0", 140.0)
-        gender_str = "Female 👩" if f0_val >= 175.0 else ("Male 👨" if f0_val < 145.0 else "? Uncertain")
+        gender_str = "Female 👩" if info.get("is_female") else "Male 👨"
         conf = info.get("gender_confidence", "")
         log_cb(f"[Character] {spk_id}: {gender_str} ({conf}) | F0={f0_val:.0f}Hz | Duration: {info['total_duration']:.1f}s | Supertonic: {info.get('supertonic_voice')}")
 
@@ -856,34 +860,57 @@ def get_valid_voice_path(spk_id, state):
         return pf
     return None
 
-def merge_continuous_subtitles(subtitles, max_gap=0.35):
+def get_effective_voice_for_sub(sub, speakers_dict=None):
+    """Returns the resolved voice label for a subtitle line."""
+    v = sub.get("assigned_voice")
+    if v and str(v).strip():
+        return str(v).strip()
+    if speakers_dict:
+        spk = sub.get("speaker", "Speaker_01")
+        spk_data = speakers_dict.get(spk, {})
+        if spk_data.get("custom_voice_path"):
+            return f"🧬 [Klon] {os.path.basename(spk_data['custom_voice_path'])}"
+        elif spk_data.get("supertonic_voice"):
+            return f"⚡ Supertonic [{spk_data['supertonic_voice']}]"
+    return "⚡ Supertonic [M1]"
+
+def merge_continuous_subtitles(subtitles, max_gap=0.40, speakers=None):
     """
-    Merges continuous subtitle lines from the same character, but ONLY if they share the exact same assigned voice!
-    This guarantees that distinct voices assigned to consecutive lines never overlap or conflict.
+    Merges continuous subtitle lines if they share the exact same voice
+    (or character) and occur consecutively within max_gap seconds.
+    This produces a single unified synthesis request for natural, flowing speech.
     """
     if not subtitles:
         return []
-    
+
     merged = []
     curr = dict(subtitles[0])
-    
+    curr_v = get_effective_voice_for_sub(curr, speakers)
+    curr["assigned_voice"] = curr_v
+
     for nxt in subtitles[1:]:
         gap = nxt["start"] - curr["end"]
-        same_speaker = (nxt.get("speaker") == curr.get("speaker"))
-        same_voice = (nxt.get("assigned_voice") == curr.get("assigned_voice"))
-        
-        if same_speaker and same_voice and gap <= max_gap:
-            curr["end"] = nxt["end"]
+        nxt_v = get_effective_voice_for_sub(nxt, speakers)
+        nxt["assigned_voice"] = nxt_v
+
+        same_voice = (curr_v == nxt_v)
+        same_speaker = (curr.get("speaker") == nxt.get("speaker"))
+
+        # Merge if they share the same voice (or same speaker with non-conflicting voice) and gap is small
+        if (same_voice or (same_speaker and not curr_v)) and gap <= max_gap and gap >= -0.05:
+            curr["end"] = max(curr["end"], nxt["end"])
             curr["text"] = f"{curr['text'].strip()} {nxt['text'].strip()}"
+            curr["assigned_voice"] = curr_v
         else:
             merged.append(curr)
             curr = dict(nxt)
-            
+            curr_v = nxt_v
+
     merged.append(curr)
-    
+
     for idx, item in enumerate(merged):
         item["id"] = idx + 1
-        
+
     return merged
 
 # ==============================================================================
@@ -1593,11 +1620,68 @@ def save_project(project_data, project_file):
 # 8. TKINTER GUI APPLICATION
 # ==============================================================================
 
+def find_matching_subtitle(video_path, target_lang="cs"):
+    """
+    Finds a matching subtitle (.srt or .ass) for a video file.
+    Priority:
+      1. Exact language match (e.g. video.cs.srt, video.cz.srt, video.sk.srt, video.ja.srt)
+      2. Exact base stem (e.g. video.srt, video.ass)
+      3. Language/General aliases (e.g. video.en.srt, video.default.srt)
+      4. Single subtitle file in directory if only one exists
+    """
+    if not video_path or not os.path.exists(video_path):
+        return None
+
+    folder = os.path.dirname(os.path.abspath(video_path))
+    base_name = os.path.splitext(os.path.basename(video_path))[0]
+    sub_exts = ('.srt', '.ass')
+
+    lang_code = target_lang.split()[0].lower() if target_lang else "cs"
+    aliases = [lang_code]
+    if lang_code in ("cs", "sk"):
+        aliases.extend(["cz", "cze", "ces", "sk", "slo", "slk"])
+    elif lang_code == "ja":
+        aliases.extend(["jp", "jpn"])
+    elif lang_code == "en":
+        aliases.extend(["eng", "default"])
+    aliases.extend(["default", "en", "eng"])
+
+    # 1. Check language-specific suffixes
+    for ext in sub_exts:
+        for al in aliases:
+            p = os.path.join(folder, f"{base_name}.{al}{ext}")
+            if os.path.exists(p):
+                return p
+            p_dash = os.path.join(folder, f"{base_name}-{al}{ext}")
+            if os.path.exists(p_dash):
+                return p_dash
+
+    # 2. Check exact base name (video.srt, video.ass)
+    for ext in sub_exts:
+        p = os.path.join(folder, f"{base_name}{ext}")
+        if os.path.exists(p):
+            return p
+
+    # 3. Fuzzy prefix match in folder
+    prefix = base_name.lower() + "."
+    try:
+        all_subs = [f for f in os.listdir(folder) if f.lower().endswith(sub_exts)]
+        for f in all_subs:
+            if f.lower().startswith(prefix):
+                return os.path.join(folder, f)
+        # If there is only exactly 1 subtitle file in the entire video directory, use it!
+        if len(all_subs) == 1:
+            return os.path.join(folder, all_subs[0])
+    except Exception:
+        pass
+
+    return None
+
 def create_app():
     root = tk.Tk()
     root.title("Local AI Video Dubbing & Localization Studio")
-    root.geometry("1240x960")
-    root.minsize(1060, 780)
+    root.geometry("1440x960")
+    root.minsize(960, 680)
 
     dub_state = {
         "video_path": "",
@@ -1642,27 +1726,55 @@ def create_app():
     # ==========================================================================
     top_frame = ttk.LabelFrame(tab_dubbing, text=" 1. Input Files & Configuration ", padding=8)
     top_frame.pack(fill="x", padx=10, pady=3)
+    top_frame.columnconfigure(0, weight=0)
+    top_frame.columnconfigure(1, weight=1)
+    top_frame.columnconfigure(2, weight=0)
 
-    ttk.Label(top_frame, text="Video/Audio:").grid(row=0, column=0, sticky="w")
-    video_entry = ttk.Entry(top_frame, width=76)
-    video_entry.grid(row=0, column=1, padx=5, pady=2, sticky="we")
-    
+    ttk.Label(top_frame, text="Video/Audio:").grid(row=0, column=0, sticky="w", padx=(0, 4), pady=2)
+    video_entry = ttk.Entry(top_frame)
+    video_entry.grid(row=0, column=1, padx=(2, 4), pady=2, sticky="we")
+
+    def auto_load_matching_subtitles(v_path):
+        if not v_path or not os.path.exists(v_path):
+            return
+        tgt_l = lang_combo.get().strip() if 'lang_combo' in locals() or 'lang_combo' in globals() else "cs"
+        matched_sub = find_matching_subtitle(v_path, target_lang=tgt_l)
+        if matched_sub:
+            sub_entry.delete(0, tk.END)
+            sub_entry.insert(0, matched_sub)
+            mode_var.set("EXISTING_SRT")
+            dub_state["data"]["sub_path"] = matched_sub
+            log(f"[Subtitles] Automatically loaded matching subtitles: {os.path.basename(matched_sub)}")
+
     def browse_video():
         fn = filedialog.askopenfilename(filetypes=[("Video/Audio", "*.mp4 *.mkv *.avi *.mov *.mp3 *.wav")])
         if fn:
             video_entry.delete(0, tk.END)
             video_entry.insert(0, fn)
             init_project_state(fn)
+            auto_load_matching_subtitles(fn)
 
-    ttk.Button(top_frame, text="Browse...", command=browse_video).grid(row=0, column=2, padx=5)
+    def on_video_entry_change(event=None):
+        v = video_entry.get().strip()
+        if v and os.path.exists(v):
+            init_project_state(v)
+            if not sub_entry.get().strip():
+                auto_load_matching_subtitles(v)
+
+    video_entry.bind("<FocusOut>", on_video_entry_change)
+    video_entry.bind("<Return>", on_video_entry_change)
+
+    vid_btn_box = ttk.Frame(top_frame)
+    vid_btn_box.grid(row=0, column=2, padx=(4, 0), pady=2, sticky="w")
+    ttk.Button(vid_btn_box, text="Browse...", command=browse_video).pack(side="left")
 
     mode_var = tk.StringVar(value="EXISTING_SRT")
     ttk.Radiobutton(top_frame, text="Mode A: Existing subtitles in target language (.srt/.ass)", variable=mode_var, value="EXISTING_SRT").grid(row=1, column=1, sticky="w", pady=1)
     ttk.Radiobutton(top_frame, text="Mode B: No subtitles (auto-transcribe for translation)", variable=mode_var, value="NO_SRT").grid(row=2, column=1, sticky="w", pady=1)
 
-    ttk.Label(top_frame, text="Subtitles (.srt):").grid(row=3, column=0, sticky="w")
-    sub_entry = ttk.Entry(top_frame, width=76)
-    sub_entry.grid(row=3, column=1, padx=5, pady=2, sticky="we")
+    ttk.Label(top_frame, text="Subtitles (.srt):").grid(row=3, column=0, sticky="w", padx=(0, 4), pady=2)
+    sub_entry = ttk.Entry(top_frame)
+    sub_entry.grid(row=3, column=1, padx=(2, 4), pady=2, sticky="we")
 
     def browse_sub():
         fn = filedialog.askopenfilename(filetypes=[("Subtitles", "*.srt *.ass")])
@@ -1671,10 +1783,10 @@ def create_app():
             sub_entry.insert(0, fn)
 
     sub_btn_box = ttk.Frame(top_frame)
-    sub_btn_box.grid(row=3, column=2, padx=5, sticky="w")
-    ttk.Button(sub_btn_box, text="Browse...", command=browse_sub).pack(side="left", padx=2)
+    sub_btn_box.grid(row=3, column=2, padx=(4, 0), pady=2, sticky="w")
+    ttk.Button(sub_btn_box, text="Browse...", command=browse_sub).pack(side="left")
     whisper_sub_btn = ttk.Button(sub_btn_box, text="🎙 Transcribe with Whisper", command=lambda: threading.Thread(target=task_transcribe_whisper, daemon=True).start())
-    whisper_sub_btn.pack(side="left", padx=2)
+    whisper_sub_btn.pack(side="left", padx=(4, 0))
 
     settings_frame = ttk.Frame(top_frame)
     settings_frame.grid(row=4, column=1, sticky="w", pady=3)
@@ -1696,6 +1808,18 @@ def create_app():
     pitch_profile_var = tk.StringVar(value="Asia (China, Japan, Korea)")
     pitch_combo = ttk.Combobox(settings_frame, textvariable=pitch_profile_var, values=["Asia (China, Japan, Korea)", "Western / Europe (US, EU)"], width=25, state="readonly")
     pitch_combo.pack(side="left", padx=2)
+
+    def on_pitch_profile_change(event=None):
+        speakers = dub_state["data"].get("speakers", {})
+        if speakers:
+            cur_p = pitch_profile_var.get()
+            assign_supertonic_voices_to_speakers(speakers, profile=cur_p)
+            save_project(dub_state["data"], dub_state["proj_file"])
+            refresh_speaker_table()
+            refresh_subtitle_table()
+            log(f"[Profile] Character voices re-assigned according to profile: {cur_p}")
+
+    pitch_combo.bind("<<ComboboxSelected>>", on_pitch_profile_change)
 
     ttk.Label(settings_frame, text="Max Characters:").pack(side="left", padx=(10, 2))
     max_spk_spin = ttk.Spinbox(settings_frame, from_=2, to=15, width=4)
@@ -1737,7 +1861,7 @@ def create_app():
     mid_frame.pack(fill="x", padx=10, pady=2)
 
     columns = ("speaker", "duration", "gender", "mode", "voice_ref")
-    spk_tree = ttk.Treeview(mid_frame, columns=columns, show="headings", height=4, selectmode="browse")
+    spk_tree = ttk.Treeview(mid_frame, columns=columns, show="headings", height=4, selectmode="extended")
     
     spk_tree.heading("speaker", text="Character")
     spk_tree.heading("duration", text="Speech Duration")
@@ -1760,6 +1884,8 @@ def create_app():
     tbl_btn_frame.pack(fill="x", padx=10, pady=2)
 
     def refresh_speaker_table():
+        if 'update_spk_voices_dropdown' in locals() or 'update_spk_voices_dropdown' in globals():
+            update_spk_voices_dropdown()
         for row in spk_tree.get_children():
             spk_tree.delete(row)
         speakers = dub_state["data"].get("speakers", {})
@@ -1767,18 +1893,17 @@ def create_app():
 
         for spk_id, d in sorted(speakers.items()):
             dur_str = f"{d.get('total_duration', 0):.1f} s"
-            avg_f0 = d.get('avg_f0', 140.0)
-            prof_val = pitch_profile_var.get() if 'pitch_profile_var' in globals() else "Ázia"
-            is_asia_prof = "ázia" in prof_val.lower() or "azia" in prof_val.lower()
-            m_cutoff = 160.0 if is_asia_prof else 142.0
-            f_cutoff = 185.0 if is_asia_prof else 168.0
 
-            if avg_f0 >= f_cutoff:
+            # Always display gender directly from the assigned character metadata
+            if d.get("gender") == "female" or d.get("is_female") is True:
                 gender_label = "Female 👩"
-            elif avg_f0 < m_cutoff:
+            elif d.get("gender") == "male" or d.get("is_female") is False:
                 gender_label = "Male 👨"
             else:
-                gender_label = "? Uncertain"
+                prof_val = pitch_profile_var.get()
+                is_asia_prof = "ázia" in prof_val.lower() or "azia" in prof_val.lower() or "asia" in prof_val.lower()
+                split_thresh = 165.0 if is_asia_prof else 155.0
+                gender_label = "Female 👩" if d.get("avg_f0", 140.0) >= split_thresh else "Male 👨"
 
             if d.get("custom_voice_path"):
                 v_name = f"Custom WAV: {os.path.basename(d['custom_voice_path'])}"
@@ -1893,17 +2018,23 @@ def create_app():
             refresh_subtitle_table()
 
     ttk.Label(tbl_btn_frame, text="Character Voice:").pack(side="left", padx=(2, 2))
-    spk_voice_combo = ttk.Combobox(tbl_btn_frame, width=32, state="readonly")
+    spk_voice_combo = ttk.Combobox(tbl_btn_frame, width=34, state="readonly")
     spk_voice_combo.pack(side="left", padx=2)
     spk_voice_combo.bind("<Return>", lambda e: play_speaker_voice_preview())
 
     def update_spk_voices_dropdown():
-        cat, vmap = get_all_available_voices(lang_combo.get().strip())
+        tgt_l = lang_combo.get().strip() if 'lang_combo' in locals() or 'lang_combo' in globals() else "cs"
+        cat, vmap = get_all_available_voices(tgt_l)
         spk_voice_combo['values'] = cat
         if cat and not spk_voice_combo.get():
             spk_voice_combo.set(cat[0])
 
+    # Populate immediately on creation!
+    update_spk_voices_dropdown()
+
     def on_speaker_select(event=None):
+        if not spk_voice_combo['values']:
+            update_spk_voices_dropdown()
         sel = spk_tree.selection()
         if not sel:
             return
@@ -1911,8 +2042,9 @@ def create_app():
         spk_data = dub_state["data"].get("speakers", {}).get(spk_id, {})
         cur_v = spk_data.get("assigned_voice") or spk_data.get("supertonic_voice")
         if cur_v:
+            cur_v_lower = str(cur_v).lower()
             for val in spk_voice_combo["values"]:
-                if cur_v in val:
+                if cur_v_lower in val.lower() or val.lower() in cur_v_lower:
                     spk_voice_combo.set(val)
                     break
 
@@ -1941,6 +2073,13 @@ def create_app():
                 spk_data["custom_voice_path"] = ""
                 spk_data["mode"] = "Supertonic"
                 assigned_label = f"⚡ Supertonic [{v_id}]"
+                # If user manually assigns an F voice, mark as female; if M voice, mark as male
+                if str(v_id).upper().startswith("F"):
+                    spk_data["gender"] = "female"
+                    spk_data["is_female"] = True
+                elif str(v_id).upper().startswith("M"):
+                    spk_data["gender"] = "male"
+                    spk_data["is_female"] = False
             elif v_info.get("type") == "edge":
                 v_id = v_info["voice_id"]
                 spk_data["edge_voice"] = v_id
@@ -2009,11 +2148,75 @@ def create_app():
         except Exception as e:
             messagebox.showwarning("Notice", f"Playback error: {e}")
 
+    def merge_selected_speakers():
+        sel = spk_tree.selection()
+        if len(sel) < 2:
+            messagebox.showinfo(
+                "Merge Characters",
+                "Please select at least 2 characters in the table to merge (hold Ctrl or Shift while clicking)."
+            )
+            return
+
+        spk_ids = [spk_tree.item(item_id)["values"][0] for item_id in sel]
+        target_spk = spk_ids[0]
+        source_spks = spk_ids[1:]
+
+        speakers = dub_state["data"].setdefault("speakers", {})
+        if target_spk not in speakers:
+            messagebox.showerror("Error", f"Target character '{target_spk}' not found in project.")
+            return
+
+        confirm = messagebox.askyesno(
+            "Confirm Character Merge",
+            f"Are you sure you want to merge character(s) {', '.join(source_spks)} into '{target_spk}'?\n\n"
+            f"All dialogue lines belonging to {', '.join(source_spks)} will be reassigned to '{target_spk}'."
+        )
+        if not confirm:
+            return
+
+        target_data = speakers[target_spk]
+        target_voice = target_data.get("assigned_voice") or f"⚡ Supertonic [{target_data.get('supertonic_voice', 'M1')}]"
+
+        # 1. Merge segments and durations
+        for src_id in source_spks:
+            if src_id in speakers:
+                src_data = speakers[src_id]
+                target_data["segments"].extend(src_data.get("segments", []))
+                target_data["total_duration"] += src_data.get("total_duration", 0.0)
+                del speakers[src_id]
+
+        # 2. Recalculate robust avg_f0 for target character across combined segments
+        all_pitches = [s["f0"] for s in target_data["segments"] if "f0" in s and 65.0 < s["f0"] < 350.0]
+        if len(all_pitches) >= 2:
+            p_arr = np.array(all_pitches, dtype=np.float32)
+            p20, p80 = np.percentile(p_arr, 20), np.percentile(p_arr, 80)
+            robust = p_arr[(p_arr >= p20) & (p_arr <= p80)]
+            target_data["avg_f0"] = float(np.median(robust if len(robust) > 0 else p_arr))
+        elif all_pitches:
+            target_data["avg_f0"] = float(all_pitches[0])
+
+        # 3. Update all subtitle lines belonging to the merged characters
+        subtitles = dub_state["data"].get("subtitles", [])
+        reassigned_count = 0
+        for sub in subtitles:
+            if sub.get("speaker") in source_spks:
+                sub["speaker"] = target_spk
+                sub["assigned_voice"] = target_voice
+                reassigned_count += 1
+
+        save_project(dub_state["data"], dub_state["proj_file"])
+        refresh_speaker_table()
+        refresh_subtitle_table()
+
+        log(f"[Characters] Successfully merged {', '.join(source_spks)} into {target_spk} ({reassigned_count} dialogue lines reassigned).")
+        msg_txt = f"Successfully merged {', '.join(source_spks)} into {target_spk}!\n\nUpdated {reassigned_count} dialogue lines to {target_spk}."
+        messagebox.showinfo("Characters Merged", msg_txt)
+
     ttk.Button(tbl_btn_frame, text="▶ Test", width=7, command=play_speaker_voice_preview).pack(side="left", padx=2)
     ttk.Button(tbl_btn_frame, text="✔ Assign", style="Accent.TButton", command=assign_selected_voice_to_speaker).pack(side="left", padx=2)
-    ttk.Separator(tbl_btn_frame, orient="vertical").pack(side="left", fill="y", padx=6, pady=2)
+    ttk.Separator(tbl_btn_frame, orient="vertical").pack(side="left", fill="y", padx=8, pady=2)
     ttk.Button(tbl_btn_frame, text="▶ Play Original Clip (Video)", command=play_speaker_original_clip).pack(side="left", padx=3)
-    ttk.Button(tbl_btn_frame, text="📁 Custom WAV...", command=assign_custom_voice).pack(side="left", padx=3)
+    ttk.Button(tbl_btn_frame, text="🔗 Merge Characters (Ctrl/Shift)", command=merge_selected_speakers).pack(side="left", padx=3)
 
     # 3. Nový rámec: Zoznam replík / titulkov a priradenie hlasov (Tab 1)
     sub_frame = ttk.LabelFrame(tab_dubbing, text=" 3. Subtitles & Voice Assignment (Ctrl/Shift selection, sortable columns) ", padding=6)
@@ -2143,7 +2346,7 @@ def create_app():
             sub_tree.insert("", tk.END, iid=str(sid), values=(sid, time_str, spk, assigned_v, s.get("text", "")))
 
     engine_combo.bind("<<ComboboxSelected>>", lambda e: [refresh_speaker_table(), refresh_subtitle_table()])
-    lang_combo.bind("<<ComboboxSelected>>", lambda e: [update_tab1_voices_dropdown(), refresh_speaker_table(), refresh_subtitle_table()])
+    lang_combo.bind("<<ComboboxSelected>>", lambda e: [update_tab1_voices_dropdown(), update_spk_voices_dropdown(), refresh_speaker_table(), refresh_subtitle_table()])
 
     # 4. Rámec ovládania spustenia dabingu
     dub_ctrl_frame = ttk.LabelFrame(tab_dubbing, text=" 4. Dubbing Execution ", padding=8)
@@ -2659,7 +2862,7 @@ def create_app():
                 prog_var.config(value=80)
             else:
                 max_spks = int(max_spk_spin.get())
-                cur_prof = pitch_profile_var.get() if 'pitch_profile_var' in globals() else "Ázia"
+                cur_prof = pitch_profile_var.get()
                 segments, speakers = diarize_segments_direct(speech_audio, segments, max_speakers=max_spks, log_cb=log, profile=cur_prof)
                 prog_var.config(value=80)
 
@@ -2730,7 +2933,8 @@ def create_app():
                 root.after(0, refresh_subtitle_table)
 
             raw_subtitles = dub_state["data"].get("subtitles", [])
-            subtitles = merge_continuous_subtitles(raw_subtitles, max_gap=0.35)
+            spks_map = dub_state["data"].get("speakers", {})
+            subtitles = merge_continuous_subtitles(raw_subtitles, max_gap=0.40, speakers=spks_map)
 
             # Clean legacy index-based audio chunks (hash-based chunks are preserved)
             gen_dir = dub_state["folders"]["generated"]
@@ -3308,6 +3512,7 @@ def create_app():
 
     # Inicializácia roletiek a počiatočného stavu
     update_tab1_voices_dropdown()
+    update_spk_voices_dropdown()
     update_narr_voices_dropdown()
     parse_and_update_tab2_phrases(force_default=False)
 
