@@ -1,0 +1,1 @@
+Follow rules in ./GEMINI.md
