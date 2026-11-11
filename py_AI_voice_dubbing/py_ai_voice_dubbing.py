@@ -124,6 +124,10 @@ os.makedirs(VOICES_DIR, exist_ok=True)
 SUPERTONIC_MALE_VOICES = ["M1", "M2", "M3", "M4", "M5"]
 SUPERTONIC_FEMALE_VOICES = ["F1", "F2", "F3", "F4", "F5"]
 
+# Ranked voice assignment order by speaking duration (longest speaking character gets first voice)
+SUPERTONIC_MALE_RANKED = ["M5", "M2", "M4", "M3", "M1"]
+SUPERTONIC_FEMALE_RANKED = ["F4", "F3", "F2", "F5", "F1"]
+
 SUPERTONIC_VOICE_CATALOG = [
     ("M1 (Male - Deep / Battle)", "M1"),
     ("M2 (Male - Natural Narrator)", "M2"),
@@ -614,19 +618,19 @@ def assign_supertonic_voices_to_speakers(speakers, profile="asia"):
     male_speakers.sort(key=lambda x: x[2], reverse=True)
     female_speakers.sort(key=lambda x: x[2], reverse=True)
 
-    # Assign Male voices M1..M5 by duration
+    # Assign Male voices M5, M2, M4, M3, M1 by duration
     for rank, (spk_id, spk_info, dur) in enumerate(male_speakers):
-        v_idx = rank % len(SUPERTONIC_MALE_VOICES)
-        chosen = SUPERTONIC_MALE_VOICES[v_idx]
+        v_idx = rank % len(SUPERTONIC_MALE_RANKED)
+        chosen = SUPERTONIC_MALE_RANKED[v_idx]
         spk_info["supertonic_voice"] = chosen
         spk_info["assigned_voice"] = f"⚡ Supertonic [{chosen}]"
         for seg in spk_info.get("segments", []):
             seg["assigned_voice"] = f"⚡ Supertonic [{chosen}]"
 
-    # Assign Female voices F1..F5 by duration
+    # Assign Female voices F4, F3, F2, F5, F1 by duration
     for rank, (spk_id, spk_info, dur) in enumerate(female_speakers):
-        v_idx = rank % len(SUPERTONIC_FEMALE_VOICES)
-        chosen = SUPERTONIC_FEMALE_VOICES[v_idx]
+        v_idx = rank % len(SUPERTONIC_FEMALE_RANKED)
+        chosen = SUPERTONIC_FEMALE_RANKED[v_idx]
         spk_info["supertonic_voice"] = chosen
         spk_info["assigned_voice"] = f"⚡ Supertonic [{chosen}]"
         for seg in spk_info.get("segments", []):

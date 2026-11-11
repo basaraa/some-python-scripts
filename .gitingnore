@@ -1,0 +1,104 @@
+# ==============================================================================
+# Bytecode, Compiled Binaries, and Cache
+# ==============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# ==============================================================================
+# Virtual Environments (Local dependencies)
+# ==============================================================================
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# ==============================================================================
+# Environment Variables, Secrets & API Keys
+# ==============================================================================
+.env
+.env.local
+.env.*.local
+*.env
+# Keep template file tracked if you use one:
+!.env.example
+
+# ==============================================================================
+# Logs, Temporary Outputs & Local Databases (Common in multi-project repos)
+# ==============================================================================
+*.log
+logs/
+temp/
+tmp/
+output/
+outputs/
+*.sqlite3
+*.db
+
+# ==============================================================================
+# Testing, Code Quality & Coverage
+# ==============================================================================
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.ruff_cache/
+
+# ==============================================================================
+# Build, Packaging & Distribution
+# ==============================================================================
+build/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ==============================================================================
+# Jupyter Notebooks & Data Formats
+# ==============================================================================
+.ipynb_checkpoints
+*/.ipynb_checkpoints/*
+
+# ==============================================================================
+# IDEs & Text Editors
+# ==============================================================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ==============================================================================
+# Operating System Files
+# ==============================================================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
