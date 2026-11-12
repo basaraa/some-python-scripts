@@ -299,9 +299,13 @@ def get_vram_status():
     return "Device: CPU / ONNX (Optimalizované)"
 
 def clear_vram():
-    if DEVICE == "cuda":
-        gc.collect()
-        torch.cuda.empty_cache()
+    gc.collect()
+    if torch.cuda.is_available():
+        try:
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+        except Exception:
+            pass
 
 def get_audio_duration(file_path):
     cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", file_path]
@@ -521,7 +525,15 @@ def separate_sources(audio_path, output_dir, log_cb=print):
     """
     log_cb("[Separation] Running HTDemucs to isolate dialogue and preserve background...")
     clear_vram()
-    cmd = [sys.executable, "-m", "demucs.separate", "-n", "htdemucs", "--two-stems", "vocals", "-d", DEVICE, "-o", output_dir, audio_path]
+    cmd = [
+        sys.executable, "-m", "demucs.separate",
+        "-n", "htdemucs",
+        "--two-stems", "vocals",
+        "-d", DEVICE,
+        "-j", "1",
+        "-o", output_dir,
+        audio_path
+    ]
     run_cmd(cmd)
     
     base_name = os.path.splitext(os.path.basename(audio_path))[0]
@@ -567,11 +579,16 @@ class OfflineSpeakerEncoder:
     def embed_utterance(self, wav_data, sr=SAMPLE_RATE):
         if self.backend == "speechbrain":
             if sr != 16000:
+                import math
                 import scipy.signal
-                wav_data = scipy.signal.resample(wav_data, int(len(wav_data) * 16000 / sr))
+                g = math.gcd(16000, int(sr))
+                up = 16000 // g
+                down = int(sr) // g
+                wav_data = scipy.signal.resample_poly(wav_data, up, down)
             tensor = torch.tensor(wav_data, dtype=torch.float32).unsqueeze(0).to(DEVICE)
             with torch.no_grad():
                 emb = self.encoder.encode_batch(tensor).squeeze().cpu().numpy()
+            del tensor
             return emb / (np.linalg.norm(emb) + 1e-8)
         elif self.backend == "resemblyzer":
             from resemblyzer import preprocess_wav
@@ -676,6 +693,8 @@ def diarize_segments_direct(audio_path, segments, max_speakers=6, log_cb=print, 
             features.append(emb)
             pitches.append(f0)
             valid_indices.append(idx)
+            if len(features) % 50 == 0:
+                clear_vram()
         except Exception:
             continue
 
@@ -1463,6 +1482,7 @@ def create_adaptive_master_mix(orig_audio_path, bgm_audio_path, dialogue_track, 
        a 20% Foley/ambience floor is preserved, and dynamic transient detection passes loud sound
        effects (screams, crashes) up to 65% so action and fantasy scenes are never muffled or silent.
     """
+    import math
     import scipy.signal
 
     def load_and_resample(path, target_sr):
@@ -1470,8 +1490,11 @@ def create_adaptive_master_mix(orig_audio_path, bgm_audio_path, dialogue_track, 
         if len(data.shape) > 1:
             data = np.mean(data, axis=1)
         if file_sr != target_sr:
-            num_samples = int(round(len(data) * target_sr / file_sr))
-            data = scipy.signal.resample(data, num_samples)
+            # Polyphase FIR resampler: O(1) memory, high-fidelity anti-aliasing without giant FFT bloat
+            g = math.gcd(int(target_sr), int(file_sr))
+            up = int(target_sr) // g
+            down = int(file_sr) // g
+            data = scipy.signal.resample_poly(data, up, down)
         return data.astype(np.float32)
 
     orig_data = load_and_resample(orig_audio_path, sr)
@@ -1548,6 +1571,8 @@ def create_adaptive_master_mix(orig_audio_path, bgm_audio_path, dialogue_track, 
         final_mix = (final_mix / peak) * 0.95
 
     sf.write(output_path, final_mix, sr)
+    del orig_data, bgm_data, dlg_data, active_dubbing_mask, orig_vocals, passthrough_vocals, processed_bgm, final_mix
+    clear_vram()
     return output_path
     
 def mix_and_export_video(video_path, mixed_audio_track, output_video_path, target_lang="cs"):
@@ -3416,9 +3441,12 @@ def create_app():
                     data = trim_audio_silence(data, piece_sr, db_thresh=30)
                     
                     if piece_sr != OUTPUT_SR:
+                        import math
                         import scipy.signal
-                        num_samples = int(round(len(data) * OUTPUT_SR / piece_sr))
-                        data = scipy.signal.resample(data, num_samples)
+                        g = math.gcd(int(OUTPUT_SR), int(piece_sr))
+                        up = int(OUTPUT_SR) // g
+                        down = int(piece_sr) // g
+                        data = scipy.signal.resample_poly(data, up, down)
 
                     audio_pieces.append(data.astype(np.float32))
                     audio_pieces.append(silence_sentence)
