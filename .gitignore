@@ -102,3 +102,25 @@ MANIFEST
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# ==============================================================================
+# Custom testing files
+# ==============================================================================
+*.mkv
+*.mp3
+*.wav
+*.mp4
+*.avi
+*.mov
+*.m4v
+*.webm
+*.m4a
+*.aac
+*.flac
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.srt
+*.ass
+*.sup

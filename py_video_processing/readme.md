@@ -26,7 +26,13 @@ A lightweight and powerful Python Tkinter GUI tool designed for batch and indivi
   - **Hardware Acceleration:** Auto-detects **NVIDIA NVENC** (`hevc_nvenc`) with tunable CQ quality and NVENC presets (`p1`–`p7`).
   - **Software Encoding:** High-efficiency CPU encoding with `libx265` (`CRF` + `medium` preset).
   - **Audio Conversion:** Convert incompatible EAC3 tracks to AAC (160 kbps) or perform lossless stream copying (`copy`).
-  - **Audio Track Filtering & Export:** Keep specific audio tracks by index, or export raw audio directly to `.m4a`.
+  - **Smart Audio Track Management:**
+    - Dedicated **Audio** tab to batch keep or remove audio tracks by normalized language tags (`cze`/`cs`, `slo`/`sk`, `eng`, etc.).
+    - **Single-Track Safety Protection:** Videos with only 1 audio track are automatically protected and hidden from filtering so videos are never accidentally left silent.
+    - **Zero-Audio Fallback Guard:** If filtering would remove all tracks from a video, the default track is preserved.
+    - **Fast Standalone Stream-Copy:** "⚡ Run Audio Filtering Only" button strips audio tracks in seconds without video re-encoding.
+    - **Synchronized Cut Compatibility:** When video trimming/cutting is active, `atrim` is applied only to the surviving audio tracks, preventing desync.
+    - Export raw audio directly to `.m4a`.
   - **Container Selection:** Export to `.mkv`, `.mp4`, `.mov`, or `.webm`.
 - **Smart Subtitle Management:**
   - **Normalized Language Filtering:** Standardizes language tags (`cs`/`cze`/`ces`/`cz`, `sk`/`slo`/`slk`, `en`/`eng`, `zh`/`chi`/`zho`, etc.) so filtering works consistently across mixed batch files.

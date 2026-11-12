@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import shutil
 import subprocess
@@ -13,7 +14,11 @@ from tkinter import ttk, messagebox, filedialog
 try:
     from PIL import Image, ImageTk
 except ImportError:
-    Image = ImageTk = None
+    try:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "pillow"])
+        from PIL import Image, ImageTk
+    except Exception:
+        Image = ImageTk = None
 
 VIDEO_EXTENSIONS = {".mkv", ".avi", ".mp4", ".mov", ".m4v", ".ts", ".m2ts", ".webm"}
 
@@ -60,8 +65,15 @@ def tool_exists(name):
     return shutil.which(name) is not None
 
 
-def get_video_files(folder="."):
-    return sorted(f for f in os.listdir(folder) if os.path.splitext(f)[1].lower() in VIDEO_EXTENSIONS)
+def get_video_files(folder=".", recursive=False):
+    if not recursive:
+        return sorted(f for f in os.listdir(folder) if os.path.splitext(f)[1].lower() in VIDEO_EXTENSIONS)
+    matches = []
+    for root, _, files in os.walk(folder):
+        for f in files:
+            if os.path.splitext(f)[1].lower() in VIDEO_EXTENSIONS:
+                matches.append(os.path.relpath(os.path.join(root, f), folder))
+    return sorted(matches)
 
 
 def ffprobe_json(file):
@@ -82,13 +94,74 @@ def parse_fps(value):
         return 0.0
 
 
+def audio_streams(file):
+    try:
+        data = ffprobe_json(file)
+    except Exception:
+        return []
+    out = []
+    a_idx = 0
+    for s in data.get("streams", []):
+        if s.get("codec_type") != "audio":
+            continue
+        codec = (s.get("codec_name") or "none").lower()
+        tags = s.get("tags", {}) or {}
+        raw_lang = tags.get("language") or "und"
+        channels = int(s.get("channels") or 2)
+        out.append({
+            "index": s.get("index"),
+            "audio_index": a_idx,
+            "codec": codec,
+            "language": norm_lang(raw_lang),
+            "orig_lang": raw_lang,
+            "title": tags.get("title", ""),
+            "channels": channels,
+            "channel_layout": s.get("channel_layout", ""),
+            "default": int((s.get("disposition", {}) or {}).get("default", 0) or 0),
+        })
+        a_idx += 1
+    return out
+
+
+def audio_languages(file):
+    # Only return languages if file has MORE THAN 1 audio track
+    streams = audio_streams(file)
+    if len(streams) <= 1:
+        return []
+    return sorted({x["language"] for x in streams})
+
+
 def get_media_info(file):
     data = ffprobe_json(file)
     video = next((s for s in data.get("streams", []) if s.get("codec_type") == "video"), None)
     if not video:
         raise RuntimeError("Video stream not found")
-    audio = next((s for s in data.get("streams", []) if s.get("codec_type") == "audio"), None)
     duration = float(video.get("duration") or data.get("format", {}).get("duration") or 0)
+
+    # Audio streams
+    all_audio = []
+    a_idx = 0
+    for s in data.get("streams", []):
+        if s.get("codec_type") != "audio":
+            continue
+        codec = (s.get("codec_name") or "none").lower()
+        tags = s.get("tags", {}) or {}
+        raw_lang = tags.get("language") or "und"
+        channels = int(s.get("channels") or 2)
+        all_audio.append({
+            "index": s.get("index"),
+            "audio_index": a_idx,
+            "codec": codec,
+            "language": norm_lang(raw_lang),
+            "orig_lang": raw_lang,
+            "title": tags.get("title", ""),
+            "channels": channels,
+            "channel_layout": s.get("channel_layout", ""),
+            "default": int((s.get("disposition", {}) or {}).get("default", 0) or 0),
+        })
+        a_idx += 1
+
+    audio = all_audio[0] if all_audio else None
 
     # Detection of HDR vs SDR
     color_trc = (video.get("color_transfer") or video.get("color_trc") or "").lower()
@@ -112,7 +185,9 @@ def get_media_info(file):
         "fps": parse_fps(video.get("r_frame_rate", "0/1")),
         "video_codec": video.get("codec_name", ""),
         "pix_fmt": video.get("pix_fmt", ""),
-        "audio_codec": audio.get("codec_name", "") if audio else "",
+        "audio_codec": audio.get("codec", "") if audio else "",
+        "audio_streams": all_audio,
+        "audio_count": len(all_audio),
         "is_hdr": is_hdr,
         "hdr_type": "HDR" if is_hdr else "SDR",
     }
@@ -526,6 +601,47 @@ def build_video_filter(file, info, options):
     return ",".join(filters) if filters else None
 
 
+def get_selected_audio_streams(file, info, options):
+    all_audio = info.get("audio_streams", [])
+    if not all_audio:
+        return []
+    
+    # Safety: If video only has 1 audio track, NEVER delete it!
+    if len(all_audio) <= 1:
+        return list(all_audio)
+
+    # Backward compatibility with manual audio_tracks_to_keep (e.g. "1, 2")
+    manual_tracks = str(options.get("audio_tracks_to_keep", "")).strip()
+    if manual_tracks:
+        keep_idxs = set()
+        for t in manual_tracks.split(","):
+            t = t.strip()
+            if t.isdigit():
+                keep_idxs.add(int(t) - 1)
+        selected = [s for s in all_audio if s["audio_index"] in keep_idxs]
+        if selected:
+            return selected
+
+    keep_mode = options.get("audio_keep_mode", "all")
+    if keep_mode == "all":
+        return list(all_audio)
+
+    sel_langs = {norm_lang(l) for l in options.get("audio_languages", [])}
+    if keep_mode == "keep_selected":
+        selected = [s for s in all_audio if norm_lang(s["language"]) in sel_langs]
+    elif keep_mode == "remove_selected":
+        selected = [s for s in all_audio if norm_lang(s["language"]) not in sel_langs]
+    else:
+        selected = list(all_audio)
+
+    # Safety guard: Never leave a video without audio! Fallback to default or first track
+    if not selected:
+        default_stream = next((s for s in all_audio if s.get("default")), all_audio[0])
+        selected = [default_stream]
+
+    return selected
+
+
 def build_ffmpeg_command(file, options, info, extra_converted_srts=None):
     base = os.path.splitext(file)[0]
     ext = options.get("container_format", ".mkv")
@@ -543,12 +659,14 @@ def build_ffmpeg_command(file, options, info, extra_converted_srts=None):
     if external_srt and os.path.exists(external_srt):
         cmd += ["-i", external_srt]
 
-    vf = build_video_filter(file, info, options)
-    crop = get_crop_for_file(file, info, options)
-    cut = get_cut_for_file(file, options)
-    target = get_target_resolution(info, options)
-    hdr_convert = options.get("remove_hdr") and info.get("is_hdr")
-    video_encode = options.get("video_convert") or crop["enabled"] or cut["enabled"] or target != (info["width"], info["height"]) or hdr_convert
+    audio_only = bool(options.get("audio_only"))
+
+    vf = None if audio_only else build_video_filter(file, info, options)
+    crop = {"enabled": False} if audio_only else get_crop_for_file(file, info, options)
+    cut = {"enabled": False} if audio_only else get_cut_for_file(file, options)
+    target = (info["width"], info["height"]) if audio_only else get_target_resolution(info, options)
+    hdr_convert = False if audio_only else (options.get("remove_hdr") and info.get("is_hdr"))
+    video_encode = False if audio_only else (options.get("video_convert") or crop["enabled"] or cut["enabled"] or target != (info["width"], info["height"]) or hdr_convert)
 
     cmd += ["-map", "0:v:0"]
     if video_encode:
@@ -561,62 +679,69 @@ def build_ffmpeg_command(file, options, info, extra_converted_srts=None):
     else:
         cmd += ["-c:v", "copy"]
 
-    tracks = str(options.get("audio_tracks_to_keep", "")).strip()
-    if tracks:
-        for t in tracks.split(","):
-            t = t.strip()
-            if t.isdigit():
-                cmd += ["-map", f"0:a:{int(t)-1}?"]
+    selected_audio = get_selected_audio_streams(file, info, options)
+    if selected_audio:
+        for out_a_idx, a_stream in enumerate(selected_audio):
+            cmd += ["-map", f"0:{a_stream['index']}"]
+            if cut["enabled"] and not audio_only:
+                cmd += [f"-filter:a:{out_a_idx}", f"atrim=start={cut['start']:.6f}:end={cut['end']:.6f},asetpts=PTS-STARTPTS"]
+                cmd += [f"-c:a:{out_a_idx}", "aac", f"-b:a:{out_a_idx}", "192k"]
+            elif options.get("audio_convert") and a_stream["codec"].lower() == "eac3" and not audio_only:
+                cmd += [f"-c:a:{out_a_idx}", "aac", f"-b:a:{out_a_idx}", "160k"]
+            else:
+                cmd += [f"-c:a:{out_a_idx}", "copy"]
     else:
         cmd += ["-map", "0:a?"]
+        if options.get("audio_convert") and info.get("audio_codec", "").lower() == "eac3" and not audio_only:
+            cmd += ["-c:a", "aac", "-b:a", "160k"]
+        else:
+            cmd += ["-c:a", "copy"]
 
-    if options.get("audio_convert") and info.get("audio_codec", "").lower() == "eac3":
-        cmd += ["-c:a", "aac", "-b:a", "160k"]
+    if audio_only:
+        cmd += ["-map", "0:s?", "-c:s", "copy"]
     else:
-        cmd += ["-c:a", "copy"]
+        keep_subs = options.get("subtitle_keep", "all")
+        subtitle_list = subtitle_streams(file)
+        converted_indices = {s_info["index"] for _, s_info in extra_srts}
 
-    keep_subs = options.get("subtitle_keep", "all")
-    subtitle_list = subtitle_streams(file)
-    converted_indices = {s_info["index"] for _, s_info in extra_srts}
-
-    if keep_subs == "all":
-        selected_subs = [s for s in subtitle_list if s["index"] not in converted_indices and s["codec"] != "none"]
-    elif keep_subs == "selected":
-        selected_languages = {norm_lang(l) for l in options.get("subtitle_languages", [])}
-        selected_subs = [s for s in subtitle_list if norm_lang(s["language"]) in selected_languages and s["index"] not in converted_indices and s["codec"] != "none"]
-    else:
-        selected_subs = []
-
-    out_sub_idx = 0
-    for s in selected_subs:
-        cmd += ["-map", f"0:{s['index']}"]
-        if ext.lower() in (".mkv", ".webm"):
-            cmd += [f"-c:s:{out_sub_idx}", "copy"]
+        if keep_subs == "all":
+            selected_subs = [s for s in subtitle_list if s["index"] not in converted_indices and s["codec"] != "none"]
+        elif keep_subs == "selected":
+            selected_languages = {norm_lang(l) for l in options.get("subtitle_languages", [])}
+            selected_subs = [s for s in subtitle_list if norm_lang(s["language"]) in selected_languages and s["index"] not in converted_indices and s["codec"] != "none"]
         else:
-            cmd += [f"-c:s:{out_sub_idx}", "mov_text"]
-        out_sub_idx += 1
+            selected_subs = []
 
-    curr_input = 1
-    for srt_path, s_info in extra_srts:
-        cmd += ["-map", f"{curr_input}:0"]
-        if ext.lower() in (".mkv", ".webm"):
-            cmd += [f"-c:s:{out_sub_idx}", "subrip"]
-        else:
-            cmd += [f"-c:s:{out_sub_idx}", "mov_text"]
-        cmd += [f"-metadata:s:s:{out_sub_idx}", f"language={norm_lang(s_info.get('language', 'und'))}"]
-        if s_info.get("title"):
-            cmd += [f"-metadata:s:s:{out_sub_idx}", f"title={s_info.get('title')}"]
-        out_sub_idx += 1
-        curr_input += 1
+        out_sub_idx = 0
+        for s in selected_subs:
+            cmd += ["-map", f"0:{s['index']}"]
+            if ext.lower() in (".mkv", ".webm"):
+                cmd += [f"-c:s:{out_sub_idx}", "copy"]
+            else:
+                cmd += [f"-c:s:{out_sub_idx}", "mov_text"]
+            out_sub_idx += 1
 
-    if external_srt and os.path.exists(external_srt):
-        cmd += ["-map", f"{curr_input}:0"]
-        if ext.lower() in (".mkv", ".webm"):
-            cmd += [f"-c:s:{out_sub_idx}", "subrip"]
-        else:
-            cmd += [f"-c:s:{out_sub_idx}", "mov_text"]
-        out_sub_idx += 1
-        curr_input += 1
+        curr_input = 1
+        for srt_path, s_info in extra_srts:
+            cmd += ["-map", f"{curr_input}:0"]
+            if ext.lower() in (".mkv", ".webm"):
+                cmd += [f"-c:s:{out_sub_idx}", "subrip"]
+            else:
+                cmd += [f"-c:s:{out_sub_idx}", "mov_text"]
+            cmd += [f"-metadata:s:s:{out_sub_idx}", f"language={norm_lang(s_info.get('language', 'und'))}"]
+            if s_info.get("title"):
+                cmd += [f"-metadata:s:s:{out_sub_idx}", f"title={s_info.get('title')}"]
+            out_sub_idx += 1
+            curr_input += 1
+
+        if external_srt and os.path.exists(external_srt):
+            cmd += ["-map", f"{curr_input}:0"]
+            if ext.lower() in (".mkv", ".webm"):
+                cmd += [f"-c:s:{out_sub_idx}", "subrip"]
+            else:
+                cmd += [f"-c:s:{out_sub_idx}", "mov_text"]
+            out_sub_idx += 1
+            curr_input += 1
 
     if ext.lower() in (".mkv", ".webm"):
         cmd += ["-map", "0:t?", "-c:t", "copy"]
@@ -643,6 +768,7 @@ class VideoBatchProcessor:
         self.files, self.info = [], {}
         self.crop_overrides, self.cut_overrides = {}, {}
         self.subtitle_language_vars = {}
+        self.audio_language_vars = {}
         self.preview_photo = None
         self.preview_seconds = 0.0
         self.preview_file = None
@@ -665,6 +791,9 @@ class VideoBatchProcessor:
             "subtitle_insert": tk.BooleanVar(value=False),
             "subtitle_mode": tk.StringVar(value="add"),
             "audio_tracks_to_keep": tk.StringVar(value=""),
+            "audio_keep_mode": tk.StringVar(value="all"),
+            "audio_filter_enabled": tk.BooleanVar(value=False),
+            "recursive_scan": tk.BooleanVar(value=False),
             "export_audio": tk.BooleanVar(value=False),
             "container_format": tk.StringVar(value=".mkv"),
             "extract_subs": tk.BooleanVar(value=False),
@@ -697,7 +826,7 @@ class VideoBatchProcessor:
         return self.info.get(f) if f else None
 
     def refresh_files(self):
-        self.files = get_video_files()
+        self.files = get_video_files(recursive=self.vars["recursive_scan"].get())
         self.info = {}
         for f in self.files:
             try: self.info[f] = get_media_info(f)
@@ -705,9 +834,12 @@ class VideoBatchProcessor:
         self.refresh_list()
         self.build_resolution_profiles()
         self.update_subtitle_list()
+        self.update_audio_list()
         if self.files:
             self.file_list.selection_set(0)
             self.on_file_selected()
+        else:
+            self.update_selected_file_audio_info()
         self.update_status()
 
     def refresh_list(self):
@@ -722,7 +854,9 @@ class VideoBatchProcessor:
                 if f in self.cut_overrides: flags.append("cut")
                 suffix = f"  [{', '.join(flags)}]" if flags else ""
                 hdr_tag = i.get("hdr_type", "SDR")
-                self.file_list.insert("end", f"   └ {i['width']}×{i['height']} | {format_time(i['duration'], False)} | {hdr_tag}{suffix}")
+                a_count = i.get("audio_count", 0)
+                a_str = f" | {a_count} audio" if a_count > 1 else ""
+                self.file_list.insert("end", f"   └ {i['width']}×{i['height']} | {format_time(i['duration'], False)} | {hdr_tag}{a_str}{suffix}")
             else:
                 self.file_list.insert("end", "   └ loading info...")
 
@@ -739,14 +873,17 @@ class VideoBatchProcessor:
         for f in self.files:
             try: self.info[f] = get_media_info(f)
             except Exception as e: messagebox.showerror("FFprobe", f"{f}\n\n{e}")
-        self.refresh_list(); self.build_resolution_profiles(); self.update_subtitle_list()
+        self.refresh_list(); self.build_resolution_profiles(); self.update_subtitle_list(); self.update_audio_list()
         if self.files: self.file_list.selection_set(0); self.on_file_selected()
+        else: self.update_selected_file_audio_info()
 
     def on_file_selected(self, event=None):
         if self.playing:
             self.stop_playback()
         f = self.selected_file()
-        if not f or f not in self.info: return
+        if not f or f not in self.info:
+            self.update_selected_file_audio_info()
+            return
         self.preview_file = f
         info = self.info[f]
         if f in self.crop_overrides:
@@ -765,11 +902,13 @@ class VideoBatchProcessor:
         self.load_preview(0)
         self.update_cut_labels()
         self.update_crop_result()
+        self.update_selected_file_audio_info()
 
     # ---------------- UI ----------------
     def build_ui(self):
         top = ttk.Frame(self.root, padding=8); top.pack(fill="x")
         ttk.Button(top, text="Refresh videos", command=self.refresh_files).pack(side="left")
+        ttk.Checkbutton(top, text="Recursive scan", variable=self.vars["recursive_scan"], command=self.refresh_files).pack(side="left", padx=6)
         ttk.Button(top, text="Add videos...", command=self.add_files).pack(side="left", padx=6)
         self.status_var = tk.StringVar(); ttk.Label(top, textvariable=self.status_var).pack(side="right")
         paned = ttk.PanedWindow(self.root, orient="horizontal"); paned.pack(fill="both", expand=True, padx=8, pady=(0,8))
@@ -779,7 +918,7 @@ class VideoBatchProcessor:
         self.file_list=tk.Listbox(lf, exportselection=False); sb=ttk.Scrollbar(lf, command=self.file_list.yview); self.file_list.configure(yscrollcommand=sb.set)
         self.file_list.pack(side="left", fill="both", expand=True); sb.pack(side="right", fill="y"); self.file_list.bind("<<ListboxSelect>>", self.on_file_selected)
         self.notebook=ttk.Notebook(right); self.notebook.pack(fill="both", expand=True)
-        self.build_operations_tab(); self.build_crop_tab(); self.build_cut_tab(); self.build_resolution_tab(); self.build_subtitle_tab()
+        self.build_operations_tab(); self.build_audio_tab(); self.build_subtitle_tab(); self.build_crop_tab(); self.build_cut_tab(); self.build_resolution_tab()
         bottom=ttk.Frame(self.root,padding=8); bottom.pack(fill="x")
         self.run_btn=ttk.Button(bottom,text="START PROCESSING",command=self.start_processing); self.run_btn.pack(side="right",ipadx=20,ipady=6)
         ttk.Label(bottom,text="Operations are optional and can be combined.").pack(side="left")
@@ -788,6 +927,7 @@ class VideoBatchProcessor:
         tab=ttk.Frame(self.notebook,padding=12); self.notebook.add(tab,text="Operations")
         ttk.Label(tab,text="Operations to perform",font=("TkDefaultFont",11,"bold")).pack(anchor="w")
         ttk.Checkbutton(tab,text="Convert audio to AAC (EAC3 → AAC)",variable=self.vars["audio_convert"]).pack(anchor="w",pady=3)
+        ttk.Checkbutton(tab,text="Filter audio tracks (configured in Audio tab)",variable=self.vars["audio_filter_enabled"]).pack(anchor="w",pady=3)
         ttk.Checkbutton(tab,text="Convert video to HEVC",variable=self.vars["video_convert"]).pack(anchor="w",pady=3)
         ttk.Checkbutton(tab,text="Remove HDR / Convert to SDR (Tonemapping)",variable=self.vars["remove_hdr"]).pack(anchor="w",pady=3)
         ttk.Checkbutton(tab,text="Use CROP",variable=self.vars["crop_enabled"]).pack(anchor="w",pady=3)
@@ -795,7 +935,7 @@ class VideoBatchProcessor:
         ttk.Checkbutton(tab,text="Insert external SRT",variable=self.vars["subtitle_insert"]).pack(anchor="w",pady=3)
         ttk.Checkbutton(tab,text="Export audio to .m4a",variable=self.vars["export_audio"]).pack(anchor="w",pady=3)
         ttk.Checkbutton(tab,text="Extract subtitles from MKV",variable=self.vars["extract_subs"]).pack(anchor="w",pady=3)
-        row=ttk.Frame(tab); row.pack(anchor="w",pady=7); ttk.Label(row,text="Audio tracks (empty = all):").pack(side="left"); ttk.Entry(row,textvariable=self.vars["audio_tracks_to_keep"],width=18).pack(side="left",padx=6)
+        row=ttk.Frame(tab); row.pack(anchor="w",pady=7); ttk.Label(row,text="Manual audio tracks to keep (e.g. 1,2 - empty = all/Audio tab):").pack(side="left"); ttk.Entry(row,textvariable=self.vars["audio_tracks_to_keep"],width=18).pack(side="left",padx=6)
         row=ttk.Frame(tab); row.pack(anchor="w",pady=5); ttk.Label(row,text="Container:").pack(side="left"); ttk.OptionMenu(row,self.vars["container_format"],".mkv",".mkv",".mp4",".mov").pack(side="left",padx=6)
         ttk.Separator(tab).pack(fill="x",pady=15)
         ttk.Label(tab,text="HEVC Quality",font=("TkDefaultFont",11,"bold")).pack(anchor="w")
@@ -1178,11 +1318,222 @@ class VideoBatchProcessor:
     def get_selected_subtitle_languages(self):
         return {norm_lang(lang) for lang, var in getattr(self, "subtitle_language_vars", {}).items() if var.get()}
 
+    # ---------------- audio tab ----------------
+    def build_audio_tab(self):
+        tab = ttk.Frame(self.notebook, padding=10)
+        self.notebook.add(tab, text="Audio")
+
+        top_info = ttk.Frame(tab)
+        top_info.pack(fill="x", pady=(0, 6))
+        ttk.Label(top_info, text="Audio Track Retention & Removal", font=("TkDefaultFont", 11, "bold")).pack(anchor="w")
+        ttk.Label(top_info, text="Manage which audio tracks to keep or remove from multi-audio videos by language.\nSingle-track videos are automatically protected and hidden from deletion to prevent losing audio.", foreground="#555").pack(anchor="w", pady=(2, 6))
+
+        # Filtering Mode
+        mode_box = ttk.LabelFrame(tab, text="Audio Filtering Mode", padding=8)
+        mode_box.pack(fill="x", pady=4)
+        ttk.Radiobutton(mode_box, text="All (default — keep all audio tracks)", variable=self.vars["audio_keep_mode"], value="all", command=self.update_selected_file_audio_info).pack(anchor="w", pady=2)
+        ttk.Radiobutton(mode_box, text="Keep selected languages (Remove all other languages from multi-audio videos)", variable=self.vars["audio_keep_mode"], value="keep_selected", command=self.update_selected_file_audio_info).pack(anchor="w", pady=2)
+        ttk.Radiobutton(mode_box, text="Remove selected languages (Keep all other languages from multi-audio videos)", variable=self.vars["audio_keep_mode"], value="remove_selected", command=self.update_selected_file_audio_info).pack(anchor="w", pady=2)
+
+        # Standalone Fast Action button
+        action_row = ttk.Frame(tab)
+        action_row.pack(fill="x", pady=6)
+        self.fast_audio_btn = ttk.Button(action_row, text="⚡ Run Audio Filtering Only (Fast Stream-Copy)", command=self.run_audio_filtering_only)
+        self.fast_audio_btn.pack(side="left")
+        ttk.Label(action_row, text="Applies audio filtering immediately without re-encoding video (takes just seconds).", foreground="#555").pack(side="left", padx=8)
+
+        # Main horizontal split
+        content = ttk.PanedWindow(tab, orient="horizontal")
+        content.pack(fill="both", expand=True, pady=6)
+
+        left_pane = ttk.Frame(content, padding=4)
+        right_pane = ttk.Frame(content, padding=4)
+        content.add(left_pane, weight=3)
+        content.add(right_pane, weight=4)
+
+        # Left: Batch languages frame
+        self.audio_lang_group = ttk.LabelFrame(left_pane, text="Batch Languages (Multi-audio videos only)", padding=8)
+        self.audio_lang_group.pack(fill="both", expand=True)
+        self.audio_lang_frame = ttk.Frame(self.audio_lang_group)
+        self.audio_lang_frame.pack(fill="both", expand=True)
+
+        btn_row = ttk.Frame(self.audio_lang_group)
+        btn_row.pack(fill="x", pady=(6, 0))
+        ttk.Button(btn_row, text="Select all", command=lambda: self.set_all_audio_languages(True)).pack(side="left", padx=(0, 4))
+        ttk.Button(btn_row, text="Deselect all", command=lambda: self.set_all_audio_languages(False)).pack(side="left", padx=4)
+        ttk.Button(btn_row, text="Refresh", command=self.update_audio_list).pack(side="right")
+
+        # Right: Selected video inspector
+        self.audio_detail_group = ttk.LabelFrame(right_pane, text="Selected Video Audio Inspector", padding=8)
+        self.audio_detail_group.pack(fill="both", expand=True)
+        self.audio_detail_frame = ttk.Frame(self.audio_detail_group)
+        self.audio_detail_frame.pack(fill="both", expand=True)
+
+        self.update_audio_list()
+        self.update_selected_file_audio_info()
+
+    def collect_all_audio_languages(self):
+        langs = set()
+        for f in self.files:
+            info = self.info.get(f)
+            if not info:
+                continue
+            streams = info.get("audio_streams", [])
+            # Rule: only videos with MORE THAN 1 track! If single track, nothing is shown
+            if len(streams) > 1:
+                for s in streams:
+                    langs.add(s["language"])
+        return sorted(langs)
+
+    def update_audio_list(self):
+        if not hasattr(self, "audio_lang_frame"):
+            return
+        for c in self.audio_lang_frame.winfo_children():
+            c.destroy()
+        langs = self.collect_all_audio_languages()
+        if not langs:
+            ttk.Label(self.audio_lang_frame, text="No videos with multiple audio tracks found.\nSingle-track videos are protected so their audio cannot be deleted.", foreground="#666", wraplength=320).pack(anchor="w", pady=10)
+            return
+
+        ttk.Label(self.audio_lang_frame, text="Languages found in multi-audio videos:", foreground="#555").pack(anchor="w", pady=(0, 6))
+        for lang in langs:
+            if lang not in self.audio_language_vars:
+                self.audio_language_vars[lang] = tk.BooleanVar(value=False)
+            var = self.audio_language_vars[lang]
+            var.trace_add("write", lambda *a: self.update_selected_file_audio_info())
+            count = sum(1 for f in self.files if len(self.info.get(f, {}).get("audio_streams", [])) > 1 for a in self.info.get(f, {}).get("audio_streams", []) if a["language"] == lang)
+            ttk.Checkbutton(self.audio_lang_frame, text=f"{lang}  ({count} tracks in batch)", variable=var).pack(anchor="w", pady=2)
+
+    def set_all_audio_languages(self, value):
+        for var in getattr(self, "audio_language_vars", {}).values():
+            var.set(value)
+        self.update_selected_file_audio_info()
+
+    def get_selected_audio_languages(self):
+        return {norm_lang(lang) for lang, var in getattr(self, "audio_language_vars", {}).items() if var.get()}
+
+    def update_selected_file_audio_info(self):
+        if not hasattr(self, "audio_detail_frame"):
+            return
+        for c in self.audio_detail_frame.winfo_children():
+            c.destroy()
+
+        f = self.selected_file()
+        if not f:
+            ttk.Label(self.audio_detail_frame, text="No video selected.", foreground="#666").pack(anchor="w", pady=8)
+            return
+
+        info = self.info.get(f, {})
+        all_audio = info.get("audio_streams", [])
+        ttk.Label(self.audio_detail_frame, text=f"File: {os.path.basename(f)}", font=("TkDefaultFont", 9, "bold")).pack(anchor="w", pady=(0, 4))
+
+        if not all_audio:
+            ttk.Label(self.audio_detail_frame, text="⚠️ No audio streams detected in this video.", foreground="#888").pack(anchor="w", pady=4)
+            return
+
+        # If only 1 audio track: show protected message and DO NOT show deletion options
+        if len(all_audio) == 1:
+            s = all_audio[0]
+            title_part = f" — '{s['title']}'" if s.get('title') else ""
+            ttk.Label(self.audio_detail_frame, text="🛡️ Protected: Single audio track detected", font=("TkDefaultFont", 9, "bold"), foreground="#2e7d32").pack(anchor="w", pady=4)
+            ttk.Label(self.audio_detail_frame, text=f"Track 1: {s['language']} [{s['codec'].upper()}, {s['channels']}ch]{title_part}", foreground="#333").pack(anchor="w", padx=10, pady=2)
+            ttk.Label(self.audio_detail_frame, text="This track will NEVER be deleted so the video is never left without audio.", foreground="#666", wraplength=380).pack(anchor="w", pady=(4, 0))
+            return
+
+        # Multi-audio file: preview which tracks remain under current settings
+        opts = {
+            "audio_keep_mode": self.vars["audio_keep_mode"].get(),
+            "audio_languages": sorted(self.get_selected_audio_languages()),
+            "audio_tracks_to_keep": self.vars["audio_tracks_to_keep"].get(),
+        }
+        selected = get_selected_audio_streams(f, info, opts)
+        selected_indices = {s["audio_index"] for s in selected}
+
+        ttk.Label(self.audio_detail_frame, text=f"Found {len(all_audio)} audio tracks ({len(selected)} will remain):", font=("TkDefaultFont", 9, "bold")).pack(anchor="w", pady=(0, 6))
+
+        for a in all_audio:
+            row = ttk.Frame(self.audio_detail_frame)
+            row.pack(fill="x", pady=2)
+            is_kept = a["audio_index"] in selected_indices
+            default_tag = " [Default]" if a.get("default") else ""
+            title_part = f" ({a['title']})" if a.get('title') else ""
+
+            if is_kept:
+                badge = "✔ KEEP"
+                color = "#2e7d32"
+            else:
+                badge = "✖ REMOVE"
+                color = "#c62828"
+
+            ttk.Label(row, text=badge, foreground=color, font=("TkDefaultFont", 9, "bold"), width=10).pack(side="left")
+            track_desc = f"Track {a['audio_index']+1}: {a['language']} [{a['codec'].upper()}, {a['channels']}ch]{title_part}{default_tag}"
+            ttk.Label(row, text=track_desc).pack(side="left", padx=4)
+
+    def run_audio_filtering_only(self):
+        if not self.files:
+            messagebox.showwarning("Audio Filtering", "No videos selected.")
+            return
+
+        mode = self.vars["audio_keep_mode"].get()
+        manual = self.vars["audio_tracks_to_keep"].get().strip()
+        selected_langs = self.get_selected_audio_languages()
+
+        if mode == "all" and not manual:
+            messagebox.showinfo("Audio Filtering", "Please select either 'Keep selected languages' or 'Remove selected languages' (and check the desired languages) or specify manual track numbers.")
+            return
+
+        if mode in ("keep_selected", "remove_selected") and not selected_langs and not manual:
+            messagebox.showwarning("Audio Filtering", "No audio languages checked. Please select at least one language.")
+            return
+
+        try:
+            opts = self.collect_options()
+        except Exception as e:
+            messagebox.showerror("Settings", str(e))
+            return
+
+        # Force video and other operations off so FFmpeg runs in pure stream-copy mode
+        opts["audio_only"] = True
+        opts["video_convert"] = False
+        opts["audio_convert"] = False
+        opts["remove_hdr"] = False
+        opts["crop_enabled"] = False
+        opts["cut_enabled"] = False
+        opts["crop_overrides"] = {}
+        opts["cut_overrides"] = {}
+        opts["resolution_profiles"] = {}
+        opts["extract_subs"] = False
+        opts["export_audio"] = False
+        opts["subtitle_keep"] = "all"
+        opts["subtitle_insert"] = False
+
+        multi_audio_files = [f for f in self.files if len(self.info.get(f, {}).get("audio_streams", [])) > 1]
+        if not multi_audio_files:
+            messagebox.showinfo("Audio Filtering", "None of the loaded videos have multiple audio tracks.\nAll single-track videos are protected and won't be altered.")
+            return
+
+        if not messagebox.askyesno("Run Fast Audio Filtering", f"This will remove unwanted audio tracks from {len(multi_audio_files)} video(s) with multiple audio tracks using fast stream copy (no video re-encoding).\n\nSingle-track videos will remain completely untouched.\n\nProceed?"):
+            return
+
+        self.run_btn.configure(state="disabled")
+        if hasattr(self, "fast_audio_btn"):
+            self.fast_audio_btn.configure(state="disabled")
+
+        def done_callback():
+            self.run_btn.configure(state="normal")
+            if hasattr(self, "fast_audio_btn"):
+                self.fast_audio_btn.configure(state="normal")
+
+        threading.Thread(target=self.process_worker, args=(opts, done_callback), daemon=True).start()
+
     # ---------------- processing ----------------
     def collect_options(self):
         profiles=self.get_resolution_profiles(); opts={k:v.get() for k,v in self.vars.items() if isinstance(v,tk.Variable)}
         opts["resolution_profiles"]=profiles; opts["crop_overrides"]=dict(self.crop_overrides); opts["cut_overrides"]=dict(self.cut_overrides)
         opts["subtitle_languages"]=sorted(self.get_selected_subtitle_languages()); opts["subtitle_keep"]=opts.pop("subtitle_keep_mode")
+        opts["audio_keep_mode"]=self.vars["audio_keep_mode"].get()
+        opts["audio_filter_enabled"]=self.vars["audio_filter_enabled"].get()
+        opts["audio_languages"]=sorted(self.get_selected_audio_languages())
         opts["crop_global"]=self.read_crop_fields(True) if opts["crop_enabled"] else {"mode":"pixels","left":0,"right":0,"top":0,"bottom":0}
         if opts["cut_enabled"]:
             s=parse_time(opts["cut_start"]);e=parse_time(opts["cut_end"])
@@ -1197,72 +1548,95 @@ class VideoBatchProcessor:
         except Exception as e:messagebox.showerror("Settings",str(e));return
         self.run_btn.configure(state="disabled");threading.Thread(target=self.process_worker,args=(opts,),daemon=True).start()
 
-    def process_worker(self,opts):
+    def process_worker(self, opts, done_cb=None):
         errors=[];done=0
+        audio_only = bool(opts.get("audio_only"))
+
         for n,f in enumerate(self.files,1):
             temp_files_to_cleanup = []
             try:
                 self.root.after(0,lambda n=n,f=f:self.status_var.set(f"Processing {n}/{len(self.files)}: {os.path.basename(f)}"))
                 info=self.info[f]
-                unknown_decoders = detect_unknown_subtitle_codecs(f)
-                all_subs = subtitle_streams(f)
 
-                # Prepare clean .srt for WebVTT / S_TEXT/WEBVTT tracks
                 converted_srts = []
-                sub_track_idx = 0
-                for s in all_subs:
-                    is_vtt = (s["codec"] == "webvtt") or (s["codec"] == "none") or (unknown_decoders.get(s["index"]) == "webvtt")
-                    if is_vtt and f.lower().endswith(".mkv"):
-                        srt_text = extract_webvtt_as_srt(f, s["index"], s["language"], sub_track_index=sub_track_idx)
-                        if srt_text:
-                            tfd, tpath = tempfile.mkstemp(suffix=f"_{s['language']}.srt")
-                            os.close(tfd)
-                            with open(tpath, "w", encoding="utf-8") as srt_file:
-                                srt_file.write(srt_text)
-                            temp_files_to_cleanup.append(tpath)
-                            converted_srts.append((tpath, s))
-                    sub_track_idx += 1
-
-                # 1. Subtitle extraction to separate files
-                if opts["extract_subs"] and f.lower().endswith(".mkv"):
+                # Only run WebVTT parsing if NOT audio-only AND subtitle extraction/insertion is requested
+                need_sub_conversion = not audio_only and (opts.get("extract_subs") or opts.get("subtitle_insert"))
+                if need_sub_conversion:
+                    unknown_decoders = detect_unknown_subtitle_codecs(f)
+                    all_subs = subtitle_streams(f)
+                    sub_track_idx = 0
                     for s in all_subs:
-                        out_ext = {"subrip": "srt", "ass": "ass", "ssa": "ssa", "hdmv_pgs_subtitle": "sup"}.get(s["codec"], "srt")
-                        out = f"{os.path.splitext(f)[0]}.{s['language']}.{out_ext}"
-                        
-                        matching_conv = next((tpath for tpath, s_info in converted_srts if s_info["index"] == s["index"]), None)
-                        if matching_conv:
-                            shutil.copyfile(matching_conv, f"{os.path.splitext(f)[0]}.{s['language']}.srt")
-                        elif s["codec"] != "none":
-                            cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", f, "-map", f"0:{s['index']}", "-c:s", "copy", out]
-                            subprocess.run(cmd, check=True)
+                        is_vtt = (s["codec"] == "webvtt") or (s["codec"] == "none") or (unknown_decoders.get(s["index"]) == "webvtt")
+                        if is_vtt and f.lower().endswith(".mkv"):
+                            srt_text = extract_webvtt_as_srt(f, s["index"], s["language"], sub_track_index=sub_track_idx)
+                            if srt_text:
+                                tfd, tpath = tempfile.mkstemp(suffix=f"_{s['language']}.srt")
+                                os.close(tfd)
+                                with open(tpath, "w", encoding="utf-8") as srt_file:
+                                    srt_file.write(srt_text)
+                                temp_files_to_cleanup.append(tpath)
+                                converted_srts.append((tpath, s))
+                        sub_track_idx += 1
+
+                    # 1. Subtitle extraction to separate files
+                    if opts.get("extract_subs") and f.lower().endswith(".mkv"):
+                        for s in all_subs:
+                            out_ext = {"subrip": "srt", "ass": "ass", "ssa": "ssa", "hdmv_pgs_subtitle": "sup"}.get(s["codec"], "srt")
+                            out = f"{os.path.splitext(f)[0]}.{s['language']}.{out_ext}"
+                            matching_conv = next((tpath for tpath, s_info in converted_srts if s_info["index"] == s["index"]), None)
+                            if matching_conv:
+                                shutil.copyfile(matching_conv, f"{os.path.splitext(f)[0]}.{s['language']}.srt")
+                            elif s["codec"] != "none":
+                                cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", f, "-map", f"0:{s['index']}", "-c:s", "copy", out]
+                                subprocess.run(cmd, check=True)
 
                 # 2. Audio export
-                if opts["export_audio"]:
-                    subprocess.run(["ffmpeg","-hide_banner","-loglevel","error","-i",f,"-vn","-map","0:a:0?","-c:a","copy","-y",os.path.splitext(f)[0]+"_audio.m4a"],check=True)
+                if opts.get("export_audio") and not audio_only:
+                    export_a = get_selected_audio_streams(f, info, opts)
+                    a_map = f"0:{export_a[0]['index']}" if export_a else "0:a:0?"
+                    subprocess.run(["ffmpeg","-hide_banner","-loglevel","error","-i",f,"-vn","-map",a_map,"-c:a","copy","-y",os.path.splitext(f)[0]+"_audio.m4a"],check=True)
 
                 # 3. Video processing
-                crop = get_crop_for_file(f, info, opts)
-                cut = get_cut_for_file(f, opts)
-                target = get_target_resolution(info, opts)
-                subtitle_change = (opts["subtitle_keep"] == "none") or (opts["subtitle_keep"] == "selected")
-                has_vtt_subs = len(converted_srts) > 0 if opts["subtitle_keep"] != "none" else False
-                hdr_convert = opts.get("remove_hdr") and info.get("is_hdr")
+                if audio_only:
+                    all_audio = info.get("audio_streams", [])
+                    sel_audio = get_selected_audio_streams(f, info, opts)
+                    # Process only if multi-track video and tracks are actually filtered
+                    if len(all_audio) > 1 and len(sel_audio) != len(all_audio):
+                        cmd = build_ffmpeg_command(f, opts, info)
+                        subprocess.run(cmd, check=True)
+                        done += 1
+                else:
+                    crop = get_crop_for_file(f, info, opts)
+                    cut = get_cut_for_file(f, opts)
+                    target = get_target_resolution(info, opts)
+                    subtitle_change = (opts["subtitle_keep"] == "none") or (opts["subtitle_keep"] == "selected")
+                    has_vtt_subs = len(converted_srts) > 0 if opts["subtitle_keep"] != "none" else False
+                    hdr_convert = opts.get("remove_hdr") and info.get("is_hdr")
 
-                has = (opts["video_convert"] or opts["audio_convert"] or opts["subtitle_insert"] or
-                       opts["audio_tracks_to_keep"] or crop["enabled"] or cut["enabled"] or
-                       target != (info["width"], info["height"]) or subtitle_change or has_vtt_subs or hdr_convert)
+                    # Audio filtering check
+                    all_audio = info.get("audio_streams", [])
+                    audio_filter_active = False
+                    if len(all_audio) > 1:
+                        if opts.get("audio_filter_enabled") or opts.get("audio_keep_mode") in ("keep_selected", "remove_selected") or opts.get("audio_tracks_to_keep"):
+                            sel_audio = get_selected_audio_streams(f, info, opts)
+                            if len(sel_audio) != len(all_audio):
+                                audio_filter_active = True
 
-                if has:
-                    srts_for_video = []
-                    if opts["subtitle_keep"] == "all":
-                        srts_for_video = converted_srts
-                    elif opts["subtitle_keep"] == "selected":
-                        sel_langs = {norm_lang(l) for l in opts.get("subtitle_languages", [])}
-                        srts_for_video = [(p, s_inf) for p, s_inf in converted_srts if norm_lang(s_inf["language"]) in sel_langs]
+                    has = (opts["video_convert"] or opts["audio_convert"] or opts["subtitle_insert"] or
+                           opts["audio_tracks_to_keep"] or crop["enabled"] or cut["enabled"] or
+                           target != (info["width"], info["height"]) or subtitle_change or has_vtt_subs or hdr_convert or audio_filter_active)
 
-                    cmd = build_ffmpeg_command(f, opts, info, extra_converted_srts=srts_for_video)
-                    subprocess.run(cmd, check=True)
-                    done += 1
+                    if has:
+                        srts_for_video = []
+                        if opts["subtitle_keep"] == "all":
+                            srts_for_video = converted_srts
+                        elif opts["subtitle_keep"] == "selected":
+                            sel_langs = {norm_lang(l) for l in opts.get("subtitle_languages", [])}
+                            srts_for_video = [(p, s_inf) for p, s_inf in converted_srts if norm_lang(s_inf["language"]) in sel_langs]
+
+                        cmd = build_ffmpeg_command(f, opts, info, extra_converted_srts=srts_for_video)
+                        subprocess.run(cmd, check=True)
+                        done += 1
             except Exception as e:
                 errors.append(f"{os.path.basename(f)}: {e}")
             finally:
@@ -1272,7 +1646,13 @@ class VideoBatchProcessor:
                     except Exception: pass
 
         def finish():
-            self.run_btn.configure(state="normal");self.update_status()
+            self.run_btn.configure(state="normal")
+            if hasattr(self, "fast_audio_btn"):
+                self.fast_audio_btn.configure(state="normal")
+            if done_cb:
+                try: done_cb()
+                except Exception: pass
+            self.update_status()
             if errors:messagebox.showerror("Completed with errors",f"Processed: {done}\nErrors: {len(errors)}\n\n"+"\n".join(errors))
             else:messagebox.showinfo("Done",f"Processing completed.\nProcessed videos: {done}")
         self.root.after(0,finish)
