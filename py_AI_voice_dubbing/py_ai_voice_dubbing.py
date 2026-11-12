@@ -967,6 +967,64 @@ def parse_srt_content(raw_srt_text):
                 })
     return subtitles
 
+def extract_clean_text_from_srt(srt_path_or_content):
+    """
+    Extracts clean dialogue text from SRT content or file path,
+    removing sequence numbers, timestamps, and formatting tags (HTML/ASS),
+    and intelligently merging incomplete sentence fragments split across subtitle cues.
+    """
+    if os.path.exists(srt_path_or_content):
+        with open(srt_path_or_content, 'r', encoding='utf-8-sig', errors='replace') as f:
+            raw_text = f.read()
+    else:
+        raw_text = srt_path_or_content
+
+    raw_text = raw_text.replace('\r\n', '\n').replace('\r', '\n')
+    blocks = re.split(r'\n\s*\n', raw_text.strip())
+    raw_lines = []
+    for block in blocks:
+        lines = [l.strip() for l in block.split('\n') if l.strip()]
+        if not lines:
+            continue
+        text_lines = []
+        for l in lines:
+            if l.isdigit():
+                continue
+            if '-->' in l:
+                continue
+            l_clean = re.sub(r'<[^>]+>', '', l)
+            l_clean = re.sub(r'\{[^}]+\}', '', l_clean).strip()
+            if l_clean:
+                text_lines.append(l_clean)
+        if text_lines:
+            raw_lines.append(" ".join(text_lines))
+
+    # Merge across subtitle boundaries when sentences are continued
+    sentence_terminators = ('.', '!', '?', '. ', '! ', '? ', '…')
+    merged_lines = []
+    for line in raw_lines:
+        line = line.strip()
+        if not line:
+            continue
+        if not merged_lines:
+            merged_lines.append(line)
+        else:
+            prev = merged_lines[-1].strip()
+            clean_prev = prev.rstrip('"\')]}»”’')
+            ends_with_terminator = clean_prev.endswith(sentence_terminators)
+            starts_with_lowercase = len(line) > 0 and line[0].islower()
+            ends_with_continuation = clean_prev.endswith((',', ';', ':', '-', '–', '—'))
+
+            if (not ends_with_terminator) or starts_with_lowercase or ends_with_continuation:
+                if prev.endswith('-') and len(prev) > 1 and prev[-2].isalnum() and line[0].isalnum():
+                    merged_lines[-1] = prev[:-1] + line
+                else:
+                    merged_lines[-1] = prev + " " + line
+            else:
+                merged_lines.append(line)
+
+    return "\n".join(merged_lines)
+
 def export_working_file(segments, output_path):
     with open(output_path, 'w', encoding='utf-8') as f:
         for seg in segments:
@@ -1016,7 +1074,7 @@ def split_text_into_sentences_list(raw_text):
             p_clean = p.strip()
             if p_clean and not re.fullmatch(r'^[.,!?:;\- 。！？、 ]+$', p_clean):
                 if p_clean[-1] not in ".!?。！？":
-                    p_clean += "."
+                    p_clean = p_clean.rstrip(',:; -–—') + "."
                 sentences.append(p_clean)
     return sentences
 
@@ -2482,21 +2540,43 @@ def create_app():
     narr_cfg.pack(fill="x", padx=10, pady=3)
 
     def load_narr_file():
-        fn = filedialog.askopenfilename(filetypes=[("Text & Subtitle Files", "*.txt *.srt")])
+        fn = filedialog.askopenfilename(filetypes=[("Text & Subtitle Files", "*.txt *.srt *.vtt"), ("All Files", "*.*")])
         if fn:
             try:
-                with open(fn, 'r', encoding='utf-8-sig') as f:
-                    content = f.read()
+                if fn.lower().endswith((".srt", ".vtt")):
+                    content = extract_clean_text_from_srt(fn)
+                else:
+                    with open(fn, 'r', encoding='utf-8-sig', errors='replace') as f:
+                        raw = f.read()
+                    # If user chose a file with SRT timestamps structure
+                    if re.search(r'\d+\s*\n\d{2}:\d{2}:\d{2}[,\.]\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}[,\.]\d{3}', raw) or '-->' in raw:
+                        content = extract_clean_text_from_srt(raw)
+                    else:
+                        content = raw
                 narr_text_box.delete("1.0", tk.END)
                 narr_text_box.insert("1.0", content)
                 parse_and_update_tab2_phrases(force_default=False)
             except Exception as e:
                 messagebox.showwarning("Notice", f"Error: {e}")
 
+    def clean_pasted_subtitles():
+        current = narr_text_box.get("1.0", tk.END).strip()
+        if '-->' in current:
+            cleaned = extract_clean_text_from_srt(current)
+            narr_text_box.delete("1.0", tk.END)
+            narr_text_box.insert("1.0", cleaned)
+            parse_and_update_tab2_phrases(force_default=False)
+            messagebox.showinfo("Cleaned", "Subtitle timing and line numbers stripped successfully.")
+        else:
+            messagebox.showinfo("Notice", "No subtitle timestamps ('-->') detected in text.")
+
     top_txt_bar = ttk.Frame(narr_cfg)
     top_txt_bar.pack(fill="x", pady=2)
     ttk.Label(top_txt_bar, text="Type or paste text below (automatically split into sentences):").pack(side="left")
-    ttk.Button(top_txt_bar, text="📂 Load from File (.txt / .srt)", command=load_narr_file).pack(side="right")
+    btn_bar = ttk.Frame(top_txt_bar)
+    btn_bar.pack(side="right")
+    ttk.Button(btn_bar, text="🧹 Clean Timings", command=clean_pasted_subtitles).pack(side="left", padx=2)
+    ttk.Button(btn_bar, text="📂 Load from File (.txt / .srt)", command=load_narr_file).pack(side="left", padx=2)
 
     narr_text_box = tk.Text(narr_cfg, height=5, wrap="word", font=("Segoe UI", 10))
     narr_text_box.pack(fill="both", expand=True, padx=4, pady=3)
