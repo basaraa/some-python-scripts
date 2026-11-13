@@ -1,98 +1,94 @@
-# Video Batch Processor 🎬✂️
+# Some Python Scripts 🐍
 
-A lightweight and powerful Python Tkinter GUI tool designed for batch and individual video processing, cutting, cropping, resolution scaling, HDR tonemapping, and conversion powered by **FFmpeg**.
-
----
-
-## 🚀 Features
-> ⚠️ **Disclaimer:** This tool was developed solely for quick, personal home video editing. It is not intended for any illicit, unauthorized, or malicious activities. See the [Disclaimer](#-disclaimer--legal-notice) below.
-
-- **Batch & Single-File Processing:** Process multiple videos simultaneously with either global settings or custom per-video overrides.
-- **HDR to SDR Tonemapping:**
-  - Automatic detection of HDR10, HLG, and Dolby Vision metadata.
-  - High-quality tonemapping to standard SDR (BT.709) using FFmpeg's `libplacebo` (BT.2390 tonemapping algorithm).
-- **Visual CROP Tool:**
-  - Crop boundaries in **pixels** or **percentages** (Left, Right, Top, Bottom).
-  - Real-time visual canvas preview with an exact bounding box overlay.
-  - Apply globally across all videos or save specific crop overrides per file.
-- **Visual CUT & Trim:**
-  - Precise Start and End time trimming (`HH:MM:SS`).
-  - Integrated in-window video player and timeline slider for seeking exact frames.
-  - Quick-action buttons: *Set START = current frame* and *Set END = current frame*.
-- **Profile-Based Resolution Scaling:**
-  - Automatically groups files by their source dimensions.
-  - Customize output resolutions per aspect ratio / input profile using high-quality **Lanczos** scaling.
-- **Video & Audio Encoding:**
-  - **Hardware Acceleration:** Auto-detects **NVIDIA NVENC** (`hevc_nvenc`) with tunable CQ quality and NVENC presets (`p1`–`p7`).
-  - **Software Encoding:** High-efficiency CPU encoding with `libx265` (`CRF` + `medium` preset).
-  - **Audio Conversion:** Convert incompatible EAC3 tracks to AAC (160 kbps) or perform lossless stream copying (`copy`).
-  - **Smart Audio Track Management:**
-    - Dedicated **Audio** tab to batch keep or remove audio tracks by normalized language tags (`cze`/`cs`, `slo`/`sk`, `eng`, etc.).
-    - **Single-Track Safety Protection:** Videos with only 1 audio track are automatically protected and hidden from filtering so videos are never accidentally left silent.
-    - **Zero-Audio Fallback Guard:** If filtering would remove all tracks from a video, the default track is preserved.
-    - **Fast Standalone Stream-Copy:** "⚡ Run Audio Filtering Only" button strips audio tracks in seconds without video re-encoding.
-    - **Synchronized Cut Compatibility:** When video trimming/cutting is active, `atrim` is applied only to the surviving audio tracks, preventing desync.
-    - Export raw audio directly to `.m4a`.
-  - **Container Selection:** Export to `.mkv`, `.mp4`, `.mov`, or `.webm`.
-- **Smart Subtitle Management:**
-  - **Normalized Language Filtering:** Standardizes language tags (`cs`/`cze`/`ces`/`cz`, `sk`/`slo`/`slk`, `en`/`eng`, `zh`/`chi`/`zho`, etc.) so filtering works consistently across mixed batch files.
-  - **Automatic WebVTT to SRT Conversion:** Automatically detects and converts problematic MKV `S_TEXT/WEBVTT` tracks into clean `.srt` without language swapping or desync.
-  - **Subtitle Extraction:** Extract subtitles from MKV into standalone files (`.srt`, `.ass`, `.sup`).
-  - **External SRT Muxing:** Automatically merges external `.srt` subtitles matching the video filename.
-
----
-
-## 📦 Requirements
-
-### 1. System Dependencies (External Tools)
-
-These external command-line binaries must be installed and accessible in your system **PATH**:
-
-| Tool | Purpose | Required |
-| :--- | :--- | :--- |
-| **FFmpeg** | Video, audio, subtitle encoding/filtering (built with `libplacebo` for HDR tonemapping) | **Yes** |
-| **FFprobe** | Extracting media stream metadata and technical info | **Yes** |
-| **MKVToolNix** (`mkvextract`) | Fast subtitle track extraction from MKV files | *Optional* (has built-in Python EBML parser fallback) |
-
-> 💡 **Windows Tip:** You can quickly install full FFmpeg via winget:  
-> ```powershell
-> winget install Gyan.FFmpeg
-> ```  
-> or download full builds from [ffmpeg.org](https://ffmpeg.org/download.html) / [gyan.dev](https://www.gyan.dev/ffmpeg/builds/).
-
----
-
-### 2. Python Dependencies
-
-- **Python 3.8+**
-- Standard library modules used: `tkinter`, `subprocess`, `json`, `threading`, `tempfile`, `base64`, `re`, `shutil`, `os`, `time`.
-
-The only external Python package required (for smooth in-app frame rendering and playback):
-
-```bash
-pip install pillow
-```
-
-*(Note for Linux users: You may also need to install the system Tkinter package: `sudo apt install python3-tk`)*
-
----
-
-## 🛠️ Usage
-1. Clone or download this repository.
-2. Place the script in your working directory or open it directly:
-   ```bash
-   python main.py
-   ```
-3. Click "Add videos..." or let it automatically load videos from the current folder via "Refresh videos".
-4. Configure your desired operations (Crop, Cut, Resolution, Audio/Video convert, HDR Tonemapping, Subtitles).
-5. Click "START PROCESSING". Output files will be saved with the _processed suffix in the same directory.
+A collection of open-source Python scripts, desktop GUI utilities, machine learning projects, and multimedia automation tools created for personal productivity, experimentation, and educational purposes.
 
 ---
 
 ## ⚠️ Disclaimer & Legal Notice
 
-This software is provided as open-source purely for personal and educational use. It was developed specifically as a lightweight tool for **cutting, cropping, and managing personal home videos**.
+> [!IMPORTANT]
+> **Universal Disclaimer Applicable to All Scripts in this Repository:**
+>
+> 1. **Personal & Non-Commercial Purpose:**  
+>    Every script and project in this repository was conceived, developed, and maintained strictly for **personal, educational, research, and non-commercial** needs. None of these tools were designed, intended, or encouraged for any illicit, unauthorized, harmful, or malicious activities.
+>
+> 2. **No Malicious Intent:**  
+>    These utilities are meant for legitimate workflows such as managing personal media archives, academic machine learning exploration, learning cryptography fundamentals, and local offline productivity. They must **not** be used for copyright infringement, unauthorized redistribution, privacy violations, unauthorized scraping, deepfake/impersonation fraud, or any illegal conduct.
+>
+> 3. **Limitation of Liability & User Responsibility:**  
+>    The author accepts **no liability or responsibility whatsoever** for any misuse, damage, data loss, legal claims, or regulatory consequences arising from the use, modification, or distribution of this software or any media generated with it.  
+>    **You, the user, are solely responsible** for ensuring that your usage complies with all applicable local, national, and international laws, intellectual property rights, data protection regulations, and third-party terms of service.
+>
+> 4. **"AS IS" Warranty:**  
+>    All code in this repository is provided on an **"AS IS" basis**, without warranty of any kind, express or implied, including but not limited to the warranties of merchantability, fitness for a particular purpose, or non-infringement.
 
-- **No Malicious Intent:** This tool is not intended, designed, or encouraged for copyright infringement, unauthorized redistribution of media, or any other illegal or harmful activities.
-- **User Responsibility:** The author accepts **no liability** for any misuse of this software, data loss, or legal consequences arising from how it is used. Users are solely responsible for ensuring that their use complies with local laws and copyright regulations.
-- **"AS IS":** The software is provided "AS IS", without warranties of any kind.
+---
+
+## 📂 Repository Structure & Project Overview
+
+Below is an overview of the tools and modules included in this repository, grouped by domain:
+
+### 🎙️ AI & Multimedia Processing (Offline & Local)
+
+| Project | Description | Primary Technologies |
+| :--- | :--- | :--- |
+| [**`py_AI_voice_dubbing/`**](./py_AI_voice_dubbing) | **Local AI Video Dubbing & Narration Studio:** An offline-first desktop GUI that automates audio-vocal separation, speaker diarization, pitch-aware voice assignment, neural speech synthesis (Supertonic, Kokoro, Edge-TTS), and audio-video muxing. | Python, Tkinter, Demucs, Whisper, SoundFile |
+| [**`py_transcript-translate/`**](./py_transcript-translate) | **AI Subtitle Generator & Neural Translator:** High-performance, offline transcription and translation suite powered by `faster-whisper` (CTranslate2) and Meta AI's `NLLB-200` to produce synchronized `.srt` subtitles in 200+ languages. | Python, Tkinter, faster-whisper, PyAV, Meta NLLB |
+
+---
+
+### 🎬 Media & Graphic Tools
+
+| Project | Description | Primary Technologies |
+| :--- | :--- | :--- |
+| [**`py_video_processing/`**](./py_video_processing) | **Video Trimmer & Encoder GUI:** Lightweight desktop utility for cutting, trimming, profile-based aspect-ratio scaling, fast stream copying, and batch audio/video re-encoding. | Python, Tkinter, FFmpeg, FFprobe |
+| [**`py_image_processor/`**](./py_image_processor) | **Batch Image Converter & Editor:** Non-destructive image processing pipeline supporting multi-format conversion (`PNG`, `JPEG`, `WEBP`, `BMP`, `TIFF`, `ICO`), interactive cropping, pixel/percentage resizing, and dynamic filter toggling. | Python, Tkinter, Pillow (PIL) |
+
+---
+
+### 💬 Subtitle Utilities
+
+| Project | Description | Primary Technologies |
+| :--- | :--- | :--- |
+| [**`py_subtile_handler/`**](./py_subtile_handler) | **All-in-One Subtitle Toolbox:** Desktop GUI with 5 integrated modules: stream extraction from video containers, intelligent timestamp shifting (including anime OP gap detection), SRT↔TXT dialogue splitter for AI translations, style tag stripper, and ASS to SRT converter. | Python, Tkinter, FFmpeg, pysubs2 |
+| [**`subtitles-ass-to-srt-converter/`**](./subtitles-ass-to-srt-converter) | Batch converter from Advanced SubStation Alpha (`.ass`) to SubRip (`.srt`) format with recursive directory traversal. | Python, Tkinter, asstosrt |
+| [**`subtitles-shift-time/`**](./subtitles-shift-time) | Time-offset alignment tool to shift `.ass` and `.srt` subtitle timestamps forward or backward from the start or from a specific dialogue line. | Python, Tkinter, pysubs2 |
+| [**`subtitles-ass-remove-styles/`**](./subtitles-ass-remove-styles) | Batch cleanup utility to strip all styling tags, bracket overrides (`{...}`), positioning, and color codes from `.ass` subtitle files. | Python, Tkinter, pysubs2 |
+| [**`subtitles-ass-replace-all-fonts/`**](./subtitles-ass-replace-all-fonts) | Replaces font family names across all `.ass` subtitle files in a specified folder with a target font. | Python, Tkinter |
+
+---
+
+### 🧠 Machine Learning & Data Science (Academic Research)
+
+*Developed as university assignments and exploratory projects in 2021.*
+
+| Project | Description | Primary Technologies |
+| :--- | :--- | :--- |
+| [**`convolution-neural-network-types-of-food/`**](./convolution-neural-network-types-of-food) | **Food Classification CNN:** Convolutional neural network for classifying food images, featuring data augmentation, batch normalization, regularizers, checkpoints, and 2D/3D dimensionality reduction visualization. | Python, TensorFlow, Keras, Scikit-learn, Seaborn |
+| [**`neural-network-wine-quality/`**](./neural-network-wine-quality) | **Wine Quality Predictor:** Neural network and logistic regression models predicting wine quality based on 13 physicochemical parameters, featuring early stopping and error curves. | Python, TensorFlow, Keras, Scikit-learn, Pandas |
+| [**`SVM-regression-music-loudness/`**](./SVM-regression-music-loudness) | **Music Loudness Regressor:** Support Vector Machine (SVM) regression and ensemble learning (AdaBoost, Random Forest) to predict track loudness using Spotify audio features. | Python, Scikit-learn, SciPy, Pandas, Seaborn |
+
+---
+
+### 🔐 Cryptography & Security (Academic Fundamentals)
+
+*Educational implementations demonstrating classic cryptographic ciphers and execution timing.*
+
+| Project | Description | Primary Technologies |
+| :--- | :--- | :--- |
+| [**`AES-encrypt-decrypt/`**](./AES-encrypt-decrypt) | GUI utility for file encryption and decryption using the Advanced Encryption Standard (AES) with execution time measurement. | Python, Tkinter, PyCryptodome |
+| [**`RSA-encrypt-decrypt/`**](./RSA-encrypt-decrypt) | GUI utility for asymmetric file encryption, decryption, and key-pair generation using the RSA algorithm with execution benchmarks. | Python, Tkinter, PyCryptodome |
+
+---
+
+### 🎮 Gaming & Utilities
+
+| Project | Description | Primary Technologies |
+| :--- | :--- | :--- |
+| [**`naruto-online-calculator/`**](./naruto-online-calculator) | Desktop calculator for estimating coupon accumulation, savings timelines, and in-game resource management for the browser game *Naruto Online*. | Python, Tkinter |
+
+---
+
+## 📜 Open Source & License
+
+This repository is **open-source** and provided free of charge for community reference, personal use, and educational learning. Individual subprojects may be governed by the [MIT License](https://opensource.org/licenses/MIT) or other compatible open-source terms. Please review the individual project directories and licenses for subproject-specific details and dependencies.
