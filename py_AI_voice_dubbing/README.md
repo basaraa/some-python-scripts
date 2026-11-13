@@ -72,6 +72,32 @@ An advanced, offline-first local AI dubbing and multi-voice narration studio bui
 
 ---
 
+## 📁 Project Structure
+
+```text
+py_AI_voice_dubbing/
+├── py_ai_voice_dubbing.py          # Application entry point (launches Tkinter GUI)
+├── requirements.txt                # Python dependencies
+├── README.md
+├── voices/                         # Custom reference audio samples (.wav/.mp3) for XTTS voice cloning
+├── speaker_profiles/               # Known Voice Profiles (.wav, .npy embeddings, profiles.json) for auto-detection
+└── modules/                        # Modular core package
+    ├── __init__.py
+    ├── config.py                   # Runtime patches, device/CUDA config, paths, and voice catalogs
+    ├── audio_utils.py              # FFmpeg wrappers, F0 pitch estimation, VRAM helpers, Demucs separation
+    ├── diarization.py              # ECAPA-TDNN/Resemblyzer speaker clustering & Known Voice Profile matching
+    ├── subtitles.py                # SRT/ASS parsing, sentence splitting, and project.json state sync
+    ├── mixer.py                    # Anti-collision dialogue assembly, adaptive SFX mixer & video export
+    ├── gui.py                      # Tkinter UI (Tab 1: Video Dubbing Studio, Tab 2: Text Narration)
+    └── tts/                        # Separated TTS engine backends
+        ├── __init__.py             # DynamicDubbingEngine router & voice sample preview player
+        ├── supertonic_engine.py    # Local ONNX Supertonic TTS backend
+        ├── edge_engine.py          # Microsoft Edge-TTS async backend
+        └── xtts_engine.py          # Coqui XTTS-v2 voice cloning backend
+```
+
+---
+
 ## 💻 System Requirements
 
 * **Operating System**: Windows 10/11, Linux, or macOS.
