@@ -32,7 +32,6 @@ Below is an overview of the tools and modules included in this repository, group
 
 | Project | Description | Primary Technologies |
 | :--- | :--- | :--- |
-| [**`py_AI_voice_dubbing/`**](./py_AI_voice_dubbing) | **Local AI Video Dubbing & Narration Studio:** An offline-first desktop GUI that automates audio-vocal separation, speaker diarization, pitch-aware voice assignment, neural speech synthesis (Supertonic, Kokoro, Edge-TTS), and audio-video muxing. | Python, Tkinter, Demucs, Whisper, SoundFile |
 | [**`py_transcript-translate/`**](./py_transcript-translate) | **AI Subtitle Generator & Neural Translator:** High-performance, offline transcription and translation suite powered by `faster-whisper` (CTranslate2) and Meta AI's `NLLB-200` to produce synchronized `.srt` subtitles in 200+ languages. | Python, Tkinter, faster-whisper, PyAV, Meta NLLB |
 
 ---
@@ -41,7 +40,6 @@ Below is an overview of the tools and modules included in this repository, group
 
 | Project | Description | Primary Technologies |
 | :--- | :--- | :--- |
-| [**`py_video_processing/`**](./py_video_processing) | **Video Trimmer & Encoder GUI:** Lightweight desktop utility for cutting, trimming, profile-based aspect-ratio scaling, fast stream copying, and batch audio/video re-encoding. | Python, Tkinter, FFmpeg, FFprobe |
 | [**`py_image_processor/`**](./py_image_processor) | **Batch Image Converter & Editor:** Non-destructive image processing pipeline supporting multi-format conversion (`PNG`, `JPEG`, `WEBP`, `BMP`, `TIFF`, `ICO`), interactive cropping, pixel/percentage resizing, and dynamic filter toggling. | Python, Tkinter, Pillow (PIL) |
 
 ---
