@@ -6,6 +6,7 @@ import re
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
+# --- AUTO-INSTALL DEPENDENCIES ---
 def install_dependencies():
     dependencies = ['pysubs2', 'asstosrt']
     for lib in dependencies:
@@ -20,13 +21,54 @@ install_dependencies()
 import pysubs2
 import asstosrt
 
-# --- POMOCNÉ FUNKCIE ---
+# --- HELPER FUNCTIONS ---
 VIDEO_EXTENSIONS = (".mp4", ".mkv", ".avi", ".mov")
+
+CHAR_REPLACEMENTS = str.maketrans({
+    # Double quotes -> "
+    "„": '"',
+    "“": '"',
+    "”": '"',
+    "‟": '"',
+    "«": '"',
+    "»": '"',
+    "″": '"',
+    "＂": '"',
+    # Single quotes and apostrophes -> '
+    "‚": "'",
+    "‘": "'",
+    "’": "'",
+    "‛": "'",
+    "‹": "'",
+    "›": "'",
+    "′": "'",
+    "＇": "'",
+    # Dashes -> -
+    "–": "-",
+    "—": "-",
+    "―": "-",
+    "−": "-",
+    "‐": "-",
+    "‑": "-",
+    "‒": "-",
+    # Ellipsis -> ...
+    "…": "...",
+    # Invisible and special whitespace characters
+    "\u00a0": " ",
+    "\u202f": " ",
+    "\u2009": " ",
+    "\u2002": " ",
+    "\u2003": " ",
+    "\u200b": "",
+    "\u200c": "",
+    "\u200d": "",
+    "\ufeff": "",
+})
 
 def is_video_file(filename):
     return filename.lower().endswith(VIDEO_EXTENSIONS)
 
-# --- HLAVNÁ STRUKTÚRA APLIKÁCIE ---
+# --- MAIN APPLICATION STRUCTURE ---
 class SubtitleToolbox:
     def __init__(self, root):
         self.root = root
@@ -36,14 +78,14 @@ class SubtitleToolbox:
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(expand=True, fill="both", padx=10, pady=10)
 
-        # Inicializácia tabov
+        # Initialize tabs
         self.setup_extractor_tab()
         self.setup_shifter_tab()
         self.setup_converter_tab()
         self.setup_cleaner_tab()
         self.setup_ass_to_srt_tab()
 
-    # 1. TAB: EXTRACTOR (Extrakcia titulkov z videa)
+    # 1. TAB: EXTRACTOR (Extract subtitles from video)
     def setup_extractor_tab(self):
         tab = ttk.Frame(self.notebook)
         self.notebook.add(tab, text="Extractor")
@@ -112,7 +154,7 @@ class SubtitleToolbox:
                 subprocess.run(["ffmpeg", "-i", fpath, "-map", f"0:{idx}", "-c:s", "srt", out, "-y"])
         messagebox.showinfo("Hotovo", "Titulky extrahované.")
 
-    # 2. TAB: SHIFTER (Posun času)
+    # 2. TAB: SHIFTER (Time shifting)
     def setup_shifter_tab(self):
         tab = ttk.Frame(self.notebook)
         self.notebook.add(tab, text="Shifter")
@@ -163,7 +205,7 @@ class SubtitleToolbox:
             messagebox.showinfo("Hotovo", f"Upravených {count} súborov.")
         except Exception as e: messagebox.showerror("Chyba", str(e))
 
-    # 3. TAB: SRT <-> TXT (Prekladací pomocník)
+    # 3. TAB: SRT <-> TXT (Translation helper)
     def setup_converter_tab(self):
         tab = ttk.Frame(self.notebook)
         self.notebook.add(tab, text="SRT <-> TXT")
@@ -207,16 +249,29 @@ class SubtitleToolbox:
                     with open(base + ".srt", "w", encoding="utf-8") as f: f.write("\n".join(srt_out))
         messagebox.showinfo("Hotovo", "Konverzia TXT na SRT dokončená.")
 
-    # 4. TAB: CLEANER (Čistenie značiek)
+    # 4. TAB: CLEANER (Tag and character cleaning)
     def setup_cleaner_tab(self):
         tab = ttk.Frame(self.notebook)
         self.notebook.add(tab, text="Cleaner")
 
-        tk.Label(tab, text=r"Odstráni formátovanie {tags} a \N z ASS/SRT", font=("Arial", 10, "bold")).pack(pady=10)
+        tk.Label(tab, text=r"Odstráni {tags}, \N a nahradí problémové znaky (úvodzovky, pomlčky...) z ASS/SRT", font=("Arial", 10, "bold")).pack(pady=10)
         
         self.cl_path = tk.Entry(tab, width=50); self.cl_path.insert(0, "./"); self.cl_path.pack(pady=5)
         tk.Button(tab, text="Vyčistiť súbory", bg="lightgreen", command=self.cl_run).pack(pady=10)
+        
+    def clean_ass_line(self, text):
+        text = re.sub(r"\{\\p[1-9][^}]*\}.*?(?:\{\\p0\}|$)", " ", text)
+        text = re.sub(r"\{.*?\}", " ", text)
+        text = re.sub(r"\\[NnhH]", " ", text)
+        text = text.translate(CHAR_REPLACEMENTS)
+        text = re.sub(r"\s+", " ", text).strip()
 
+        if re.fullmatch(r"[mlbscpMLBSCP0-9\.\-\s]+", text):
+            if len(re.findall(r"-?\d+(?:\.\d+)?", text)) >= 2:
+                return ""  
+        text = re.sub(r"\b[mlbscp]\s+(?:-?\d+(?:\.\d+)?\s*){4,}", " ", text, flags=re.IGNORECASE)
+        return re.sub(r"\s+", " ", text).strip()
+    
     def cl_run(self):
         d = self.cl_path.get()
         files = [f for f in os.listdir(d) if f.endswith(('.ass', '.srt'))]
@@ -224,13 +279,15 @@ class SubtitleToolbox:
             p = os.path.join(d, fn)
             subs = pysubs2.load(p)
             for line in subs:
-                line.text = re.sub(r"\{.*?\}", " ", line.text)
-                line.text = line.text.replace("\\N", " ").replace("\\H", " ").replace("\\h", " ")
-            subs.events = [l for l in subs if l.text.strip() != ""]
+                # Call via self.clean_ass_line
+                line.text = self.clean_ass_line(line.text)
+                
+            # Ensure no empty timestamps remain after stripping drawings:
+            subs.events = [l for l in subs.events if l.text.strip() != ""]
             subs.save(p)
         messagebox.showinfo("Hotovo", f"Vyčistených {len(files)} súborov.")
 
-    # 5. TAB: ASS TO SRT (Konverzia formátu)
+    # 5. TAB: ASS TO SRT (Format conversion)
     def setup_ass_to_srt_tab(self):
         tab = ttk.Frame(self.notebook)
         self.notebook.add(tab, text="ASS to SRT")
@@ -238,7 +295,7 @@ class SubtitleToolbox:
         tk.Label(tab, text="Hromadná konverzia .ass na .srt", font=("Arial", 10, "bold")).pack(pady=10)
         self.as_path = tk.Entry(tab, width=50); self.as_path.insert(0, "./"); self.as_path.pack(pady=5)
         
-        # PREVOLENÉ: Recursive FALSE (0), Delete TRUE (1)
+        # DEFAULTS: Recursive FALSE (0), Delete TRUE (1)
         self.as_rec = tk.IntVar(value=0)
         tk.Checkbutton(tab, text="Aj podadresáre", variable=self.as_rec).pack()
         self.as_del = tk.IntVar(value=1)
@@ -255,11 +312,11 @@ class SubtitleToolbox:
             if os.path.isfile(p) and item.endswith('.ass'):
                 success = False
                 try:
-                    # Načítame dáta a HNEĎ zavrieme súbor
+                    # Read data and immediately close the file
                     with open(p, 'r', encoding="utf8") as f:
                         srt_data = asstosrt.convert(f)
                     
-                    # Zapíšeme SRT
+                    # Write SRT
                     with open(p.replace(".ass", ".srt"), 'w', encoding="utf8", newline='') as out:
                         out.write(srt_data)
                     
@@ -268,7 +325,7 @@ class SubtitleToolbox:
                 except Exception as e:
                     print(f"Chyba pri konverzii {p}: {e}")
                 
-                # Mazanie prebehne až po uzavretí všetkých file handlerov
+                # Delete only after all file handles are closed
                 if success and self.as_del.get():
                     try:
                         os.remove(p)
