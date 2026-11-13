@@ -172,6 +172,8 @@ class BatchImageEditorApp:
         self.h_var = tk.StringVar()
         self.ent_h = ttk.Entry(dim_f, textvariable=self.h_var, width=6)
         self.ent_h.grid(row=0, column=3, padx=2)
+        self.btn_swap_wh = ttk.Button(dim_f, text="⇄", width=3, command=self.swap_wh_fields)
+        self.btn_swap_wh.grid(row=0, column=4, padx=(4, 0))
 
         self.aspect_var = tk.BooleanVar(value=True)
         self.chk_aspect = ttk.Checkbutton(resize_group, text="Keep Aspect Ratio", variable=self.aspect_var)
@@ -190,6 +192,30 @@ class BatchImageEditorApp:
         self.ent_pct = ttk.Entry(pct_f, textvariable=self.pct_var, width=6)
         self.ent_pct.grid(row=0, column=1, padx=2)
         ttk.Label(pct_f, text="%").grid(row=0, column=2)
+
+        self.rb_aspect = ttk.Radiobutton(
+            resize_group, text="By Aspect Ratio (W:H):", variable=self.resize_mode_var,
+            value="aspect", command=self.toggle_resize_inputs
+        )
+        self.rb_aspect.pack(anchor="w", pady=(6, 0))
+
+        ar_f = ttk.Frame(resize_group)
+        ar_f.pack(fill=tk.X, pady=2, padx=(16, 0))
+        self.aspect_ratio_var = tk.StringVar(value="9:16")
+        self.cmb_aspect_ratio = ttk.Combobox(
+            ar_f, textvariable=self.aspect_ratio_var, width=7,
+            values=["16:9", "9:16", "4:3", "3:4", "1:1", "3:2", "2:3", "4:5", "5:4", "21:9"]
+        )
+        self.cmb_aspect_ratio.grid(row=0, column=0, padx=(0, 2))
+        self.btn_swap_ar = ttk.Button(ar_f, text="⇄", width=3, command=self.swap_aspect_ratio)
+        self.btn_swap_ar.grid(row=0, column=1, padx=2)
+
+        self.aspect_base_var = tk.StringVar(value="Longest Side")
+        self.cmb_aspect_base = ttk.Combobox(
+            ar_f, textvariable=self.aspect_base_var, width=12, state="readonly",
+            values=["Longest Side", "Width", "Height", "Shortest Side"]
+        )
+        self.cmb_aspect_base.grid(row=0, column=2, padx=(4, 0))
 
         ttk.Button(resize_group, text="Apply Resize", command=self.apply_resize).pack(fill=tk.X, pady=(6, 2))
 
@@ -233,16 +259,47 @@ class BatchImageEditorApp:
     # ==========================================================
     def toggle_resize_inputs(self):
         mode = self.resize_mode_var.get()
-        if mode == "pixels":
-            self.ent_w.config(state=tk.NORMAL)
-            self.ent_h.config(state=tk.NORMAL)
-            self.chk_aspect.config(state=tk.NORMAL)
-            self.ent_pct.config(state=tk.DISABLED)
-        else:
-            self.ent_w.config(state=tk.DISABLED)
-            self.ent_h.config(state=tk.DISABLED)
-            self.chk_aspect.config(state=tk.DISABLED)
-            self.ent_pct.config(state=tk.NORMAL)
+        px_state = tk.NORMAL if mode == "pixels" else tk.DISABLED
+        pct_state = tk.NORMAL if mode == "percent" else tk.DISABLED
+        ar_state = tk.NORMAL if mode == "aspect" else tk.DISABLED
+        ar_base_state = "readonly" if mode == "aspect" else tk.DISABLED
+
+        self.ent_w.config(state=px_state)
+        self.ent_h.config(state=px_state)
+        self.btn_swap_wh.config(state=px_state)
+        self.chk_aspect.config(state=px_state)
+        self.ent_pct.config(state=pct_state)
+        self.cmb_aspect_ratio.config(state=ar_state)
+        self.btn_swap_ar.config(state=ar_state)
+        self.cmb_aspect_base.config(state=ar_base_state)
+
+    def swap_wh_fields(self):
+        w = self.w_var.get()
+        h = self.h_var.get()
+        self.w_var.set(h)
+        self.h_var.set(w)
+        if w != h and self.aspect_var.get():
+            self.aspect_var.set(False)
+
+    def _parse_aspect_ratio(self, text):
+        cleaned = text.strip().replace("/", ":")
+        parts = cleaned.split(":")
+        if len(parts) != 2:
+            raise ValueError
+        rw = float(parts[0].strip())
+        rh = float(parts[1].strip())
+        if rw <= 0 or rh <= 0:
+            raise ValueError
+        return rw, rh
+
+    def swap_aspect_ratio(self):
+        cleaned = self.aspect_ratio_var.get().strip().replace("/", ":")
+        parts = cleaned.split(":")
+        if len(parts) == 2:
+            left = parts[0].strip()
+            right = parts[1].strip()
+            if left and right:
+                self.aspect_ratio_var.set(f"{right}:{left}")
 
     def _sync_dimensions_fields(self):
         if self.active_file and self.active_file in self.images_data:
@@ -397,6 +454,35 @@ class BatchImageEditorApp:
                     w = max(1, int(img.width * (pct / 100.0)))
                     h = max(1, int(img.height * (pct / 100.0)))
                     img = img.resize((w, h), Image.Resampling.LANCZOS)
+                elif r_mode == 'aspect':
+                    rw = action['data']['rw']
+                    rh = action['data']['rh']
+                    base = action['data']['base']
+                    r = rw / rh
+                    orig_w, orig_h = img.size
+                    if base == 'Width':
+                        target_w = orig_w
+                        target_h = max(1, round(orig_w / r))
+                    elif base == 'Height':
+                        target_h = orig_h
+                        target_w = max(1, round(orig_h * r))
+                    elif base == 'Shortest Side':
+                        shortest = min(orig_w, orig_h)
+                        if rw >= rh:
+                            target_h = shortest
+                            target_w = max(1, round(shortest * r))
+                        else:
+                            target_w = shortest
+                            target_h = max(1, round(shortest / r))
+                    else:  # Longest Side
+                        longest = max(orig_w, orig_h)
+                        if rw >= rh:
+                            target_w = longest
+                            target_h = max(1, round(longest / r))
+                        else:
+                            target_h = longest
+                            target_w = max(1, round(longest * r))
+                    img = img.resize((target_w, target_h), Image.Resampling.LANCZOS)
                     
             elif act_type == 'rotate':
                 deg = action['data']
@@ -529,6 +615,26 @@ class BatchImageEditorApp:
                 self.images_data[filepath]['pipeline'].append({
                     'type': 'resize',
                     'data': {'mode': 'percent', 'pct': pct},
+                    'tag': tag_label
+                })
+                self.rebuild_image(filepath)
+
+        elif mode == "aspect":
+            try:
+                rw, rh = self._parse_aspect_ratio(self.aspect_ratio_var.get())
+            except ValueError:
+                messagebox.showerror("Error", "Please provide a valid aspect ratio (e.g. 16:9, 9:16, 4:3, 1:1).")
+                return
+
+            base = self.aspect_base_var.get()
+            rw_lbl = int(rw) if rw.is_integer() else rw
+            rh_lbl = int(rh) if rh.is_integer() else rh
+            tag_label = f"AR {rw_lbl}:{rh_lbl}"
+            for filepath in targets:
+                self._ensure_loaded(filepath)
+                self.images_data[filepath]['pipeline'].append({
+                    'type': 'resize',
+                    'data': {'mode': 'aspect', 'rw': rw, 'rh': rh, 'base': base},
                     'tag': tag_label
                 })
                 self.rebuild_image(filepath)
